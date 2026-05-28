@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Quillforge</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== Header ===== -->
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/><path d="M12 17H7"/></svg>
+    </div>
+    <div class="brand-text">
+      <span class="brand-name">Quillforge</span>
+      <span class="brand-sub">AI Writing Automation Suite</span>
+    </div>
+    <div class="master-pill" id="masterPill" data-state="active" role="status" aria-live="polite">
+      <span class="dot"></span><span id="masterPillText">Active</span>
+    </div>
+  </header>
+
+  <!-- ===== Section: Edit Watcher ===== -->
+  <section class="section" data-section="watcher" data-open="true">
+    <div class="section-head" data-target="watcher" tabindex="0" role="button" aria-expanded="true">
+      <span class="section-icon" data-icon="eye"></span>
+      <span class="section-title">Edit Watcher</span>
+      <span class="section-badge" data-state="on" id="watcherBadge">On</span>
+      <span class="section-chev" data-icon="chevron"></span>
+    </div>
+    <div class="section-body">
+      <div class="section-body-inner">
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Edit watcher</div>
+            <div class="row-desc">Scan thehoth.com/writer for the next Edit button</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="watcherEnabled" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Auto-open article</div>
+            <div class="row-desc">Open the article in a new tab and close /writer</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="autoClick" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="slider">
+          <div class="slider-head">
+            <span class="slider-label">Alarm duration</span>
+            <span class="slider-val" id="alarmDurationVal">10s</span>
+          </div>
+          <div class="slider-desc">How long the audio alarm rings when Edit is found</div>
+          <input type="range" class="range" id="alarmDuration" min="1" max="60" value="10" />
+          <div class="presets" data-group="alarm">
+            <button class="preset" data-val="5">5s</button>
+            <button class="preset" data-val="10">10s</button>
+            <button class="preset" data-val="20">20s</button>
+            <button class="preset" data-val="30">30s</button>
+            <button class="preset" data-val="60">60s</button>
+          </div>
+        </div>
+
+        <div class="slider">
+          <div class="slider-head">
+            <span class="slider-label">Check interval</span>
+            <span class="slider-val" id="checkIntervalVal">10s</span>
+          </div>
+          <div class="slider-desc" id="intervalDesc">Scan for the Edit button every 10 seconds</div>
+          <input type="range" class="range" id="checkInterval" min="1" max="120" value="10" />
+          <div class="presets" data-group="interval">
+            <button class="preset" data-val="5">5s</button>
+            <button class="preset" data-val="10">10s</button>
+            <button class="preset" data-val="30">30s</button>
+            <button class="preset" data-val="60">60s</button>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-ghost btn-sm" id="checkNowBtn">
+            <span data-icon="search"></span><span>Check now</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="openWriterBtn">
+            <span data-icon="external"></span><span>Open writer</span>
+          </button>
+          <button class="btn btn-danger btn-sm" id="stopAlarmBtn">
+            <span data-icon="volume-x"></span><span>Stop alarm</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Section: Spintax Scanner ===== -->
+  <section class="section" data-section="spintax" data-open="true">
+    <div class="section-head" data-target="spintax" tabindex="0" role="button" aria-expanded="true">
+      <span class="section-icon" data-icon="alert"></span>
+      <span class="section-title">Spintax Scanner</span>
+      <span class="section-badge" data-state="on" id="spintaxBadge">On</span>
+      <span class="section-chev" data-icon="chevron"></span>
+    </div>
+    <div class="section-body">
+      <div class="section-body-inner">
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Spintax detection</div>
+            <div class="row-desc">Watch every page for “requires spintax” errors</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="spintaxEnabled" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Email notifications</div>
+            <div class="row-desc">Send an EmailJS alert when spintax is detected</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="emailEnabled" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="status-row">
+          <span class="status-dot" data-tone="warn"></span>
+          <span>On trigger: closes the article tab, opens a flashing alarm screen for 30 minutes.</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Section: Article Composer ===== -->
+  <section class="section" data-section="writer" data-open="true">
+    <div class="section-head" data-target="writer" tabindex="0" role="button" aria-expanded="true">
+      <span class="section-icon" data-icon="feather"></span>
+      <span class="section-title">Article Composer</span>
+      <span class="section-badge" data-state="on" id="writerBadge">On</span>
+      <span class="section-chev" data-icon="chevron"></span>
+    </div>
+    <div class="section-body">
+      <div class="section-body-inner">
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Article composer</div>
+            <div class="row-desc">Enable Groq-powered AI generation on job pages</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="writerEnabled" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Auto mode</div>
+            <div class="row-desc">Start composing automatically on detected job pages</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="autoMode" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="row">
+          <div class="row-text">
+            <div class="row-label">Auto submit</div>
+            <div class="row-desc">Submit the assignment after the wait period</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="autoSubmit" />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <div class="slider">
+          <div class="slider-head">
+            <span class="slider-label">Wait before submit</span>
+            <span class="slider-val" id="waitTimeVal">5s</span>
+          </div>
+          <div class="slider-desc">Countdown before the auto-submit fires</div>
+          <input type="range" class="range" id="waitTime" min="0" max="30" value="5" />
+          <div class="presets" data-group="wait">
+            <button class="preset" data-val="0">0s</button>
+            <button class="preset" data-val="5">5s</button>
+            <button class="preset" data-val="10">10s</button>
+            <button class="preset" data-val="15">15s</button>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm" id="writeNowBtn">
+            <span data-icon="feather"></span><span>Compose now</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="testApiBtn">
+            <span data-icon="plug"></span><span>Test API</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Section: Groq API ===== -->
+  <section class="section" data-section="api" data-open="false">
+    <div class="section-head" data-target="api" tabindex="0" role="button" aria-expanded="false">
+      <span class="section-icon" data-icon="key"></span>
+      <span class="section-title">Groq API</span>
+      <span class="section-badge is-tag">Llama 3.1</span>
+      <span class="section-chev" data-icon="chevron"></span>
+    </div>
+    <div class="section-body">
+      <div class="section-body-inner">
+
+        <div class="api-card">
+          <div class="field-label">Groq API key</div>
+          <div class="api-key-show" id="apiKeyDisplay">
+            <span data-icon="key"></span><span id="apiKeyText">gsk_••••••••••••••••••••••••••••••••</span>
+          </div>
+          <div class="api-locked" id="lockStatus">
+            <span data-icon="lock"></span><span>Protected — enter PIN to change</span>
+          </div>
+
+          <div class="pin-area" id="pinArea">
+            <input class="input" type="password" id="pinInput" placeholder="Enter 4-digit PIN" maxlength="4" inputmode="numeric" autocomplete="off" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="pinCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="pinConfirmBtn">
+                <span data-icon="unlock"></span><span>Unlock</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="key-edit-area" id="keyEditArea">
+            <input class="input" type="text" id="keyInput" placeholder="gsk_..." autocomplete="off" spellcheck="false" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="keyCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="keySaveBtn">
+                <span data-icon="check"></span><span>Save key</span>
+              </button>
+            </div>
+          </div>
+
+          <button class="btn btn-ghost btn-sm btn-block" id="changeKeyBtn">
+            <span data-icon="lock"></span><span>Change API key</span>
+          </button>
+        </div>
+
+        <div class="api-card">
+          <div class="field-label">Model</div>
+          <div class="model-line">
+            <span class="model-badge"><span class="pulse"></span>llama-3.1-8b-instant</span>
+            <span class="fixed-note">Fixed</span>
+          </div>
+        </div>
+
+        <div class="status-row" id="apiStatusRow">
+          <span class="status-dot" id="apiDot"></span>
+          <span id="apiStatusText">API not tested</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Section: Ridge Neural Solver ===== -->
+  <section class="section" data-section="ridge" data-open="false">
+    <div class="section-head" data-target="ridge" tabindex="0" role="button" aria-expanded="false">
+      <span class="section-icon" data-icon="bolt"></span>
+      <span class="section-title">Ridge Neural Solver</span>
+      <span class="section-badge is-tag">CAPTCHA</span>
+      <span class="section-chev" data-icon="chevron"></span>
+    </div>
+    <div class="section-body">
+      <div class="section-body-inner">
+
+        <div class="api-card">
+          <div class="field-label">Mistral API key</div>
+          <div class="api-key-show" id="ridgeKeyDisplay">
+            <span data-icon="key"></span><span id="ridgeKeyText">••••••••••••••••••••••••••••••••</span>
+          </div>
+          <div class="api-locked" id="ridgeLockStatus">
+            <span data-icon="lock"></span><span>Protected — enter PIN to change</span>
+          </div>
+
+          <div class="pin-area" id="ridgePinArea">
+            <input class="input" type="password" id="ridgePinInput" placeholder="Enter 4-digit PIN" maxlength="4" inputmode="numeric" autocomplete="off" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="ridgePinCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="ridgePinConfirmBtn">
+                <span data-icon="unlock"></span><span>Unlock</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="key-edit-area" id="ridgeKeyEditArea">
+            <input class="input" type="text" id="ridgeKeyInput" placeholder="Mistral API key…" autocomplete="off" spellcheck="false" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="ridgeKeyCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="ridgeKeySaveBtn">
+                <span data-icon="check"></span><span>Save key</span>
+              </button>
+            </div>
+          </div>
+
+          <button class="btn btn-ghost btn-sm btn-block" id="ridgeChangeKeyBtn">
+            <span data-icon="lock"></span><span>Change API key</span>
+          </button>
+        </div>
+
+        <div class="api-card">
+          <div class="field-label">Element selectors</div>
+          <div class="stack gap-2">
+            <div>
+              <div class="row-desc" style="margin-bottom:5px">CAPTCHA image</div>
+              <input class="text-input" id="ridgeCaptchaSel" />
+            </div>
+            <div>
+              <div class="row-desc" style="margin-bottom:5px">Answer input</div>
+              <input class="text-input" id="ridgeInputSel" />
+            </div>
+            <div>
+              <div class="row-desc" style="margin-bottom:5px">Submit button</div>
+              <input class="text-input" id="ridgeSubmitSel" />
+            </div>
+          </div>
+        </div>
+
+        <div class="slider">
+          <div class="slider-head">
+            <span class="slider-label">Submit delay</span>
+            <span class="slider-val" id="ridgeDelayVal">3s</span>
+          </div>
+          <div class="slider-desc">Pause after filling, before clicking submit</div>
+          <input type="range" class="range" id="ridgeDelay" min="0" max="30" step="0.5" value="3" />
+          <div class="presets" data-group="ridgeDelay">
+            <button class="preset" data-val="0">0s</button>
+            <button class="preset" data-val="3">3s</button>
+            <button class="preset" data-val="5">5s</button>
+            <button class="preset" data-val="10">10s</button>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm" id="ridgeStartBtn">
+            <span data-icon="play"></span><span>Start autosolve</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="ridgeSaveBtn">
+            <span data-icon="save"></span><span>Save selectors</span>
+          </button>
+        </div>
+
+        <div class="status-row" id="ridgeStatusRow">
+          <span class="status-dot" id="ridgeDot"></span>
+          <span id="ridgeStatusText">Autosolve inactive</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Footer actions ===== -->
+  <footer class="app-footer">
+    <button class="btn btn-primary" id="saveBtn">
+      <span data-icon="save"></span><span>Save settings</span>
+    </button>
+    <button class="btn btn-danger" id="stopAllBtn">
+      <span data-icon="volume-x"></span><span>Stop all alarms</span>
+    </button>
+  </footer>
+
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<audio id="alertAudio" src="beep.wav" preload="auto"></audio>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>

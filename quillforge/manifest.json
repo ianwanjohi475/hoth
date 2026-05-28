@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Quillforge — AI Writing Automation Suite",
+  "short_name": "Quillforge",
+  "version": "2.0.0",
+  "description": "Sidebar suite for thehoth.com/writer — watches for Edit assignments, detects spintax errors, auto-writes articles with Groq, and auto-solves CAPTCHAs with Mistral vision.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "debugger",
+    "activeTab",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://www.thehoth.com/*",
+    "https://api.emailjs.com/*",
+    "https://api.groq.com/*",
+    "https://api.mistral.ai/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Quillforge",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "beep.wav",
+        "spintax-alert.html",
+        "icons/icon-16.png",
+        "icons/icon-32.png",
+        "icons/icon-48.png",
+        "icons/icon-128.png",
+        "icons/icon.svg"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
