@@ -9,7 +9,7 @@ const DEFAULT_GROQ_KEY  = 'gsk_SHIhCU73ck6Mq1RdVHodWGdyb3FYND5tVeZrrtO4P2sDSHdKz
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
 const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
 const MISTRAL_MODEL     = 'pixtral-12b-2409';
-const SECURITY_CODE     = '4759';
+const SECURITY_CODE     = '0000';
 
 const EMAILJS = {
   endpoint:    'https://api.emailjs.com/api/v1.0/email/send',

@@ -3,7 +3,7 @@
 // ============================================================================
 
 // ---------- Constants -------------------------------------------------------
-const PROTECTED_PIN     = '4759';   // Groq API key unlock
+const PROTECTED_PIN     = '0000';   // Groq API key unlock
 const RIDGE_PIN         = '0000';   // Ridge / Mistral API key unlock
 const DEFAULT_GROQ_KEY  = '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';
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
