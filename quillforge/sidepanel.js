@@ -196,7 +196,9 @@ document.querySelectorAll('.preset').forEach(btn => {
     if (group === 'alarm')      { alarmDurationEl.value = val; alarmDurationEl.dispatchEvent(new Event('input')); }
     else if (group === 'interval') { checkIntervalEl.value = val; checkIntervalEl.dispatchEvent(new Event('input')); }
     else if (group === 'wait')  { waitTimeEl.value = val; waitTimeEl.dispatchEvent(new Event('input')); }
-    else if (group === 'ridgeDelay') { ridgeDelayEl.value = val; ridgeDelayEl.dispatchEvent(new Event('input')); }
+    else if (group === 'ridgeDelay')    { ridgeDelayEl.value    = val; ridgeDelayEl.dispatchEvent(new Event('input')); setRangeFill(ridgeDelayEl); }
+    else if (group === 'ocrPasses')     { ocrPassesEl.value     = val; ocrPassesEl.dispatchEvent(new Event('input')); setRangeFill(ocrPassesEl); }
+    else if (group === 'captchaLength') { captchaLengthEl.value = val; captchaLengthEl.dispatchEvent(new Event('input')); setRangeFill(captchaLengthEl); }
     markDirty();
   });
 });
@@ -575,6 +577,10 @@ const ridgeInputSel       = $('ridgeInputSel');
 const ridgeSubmitSel      = $('ridgeSubmitSel');
 const ridgeDelayEl        = $('ridgeDelay');
 const ridgeDelayVal       = $('ridgeDelayVal');
+const ocrPassesEl         = $('ocrPasses');
+const ocrPassesVal        = $('ocrPassesVal');
+const captchaLengthEl     = $('captchaLength');
+const captchaLengthVal    = $('captchaLengthVal');
 const ridgeStartBtn       = $('ridgeStartBtn');
 const ridgeSaveBtn        = $('ridgeSaveBtn');
 const ridgeDot            = $('ridgeDot');
@@ -587,6 +593,8 @@ chrome.storage.local.get({
   submitSelector:   'input[type="submit"].btn.btn-success.btn-large',
   delay:            3,
   autosolveEnabled: false,
+  ocrPasses:        5,
+  captchaLength:    5,
 }, (data) => {
   ridgeCurrentKey = data.ridgeApiKey || RIDGE_DEFAULT_KEY;
   ridgeKeyText.textContent = maskRidgeKey(ridgeCurrentKey);
@@ -597,6 +605,17 @@ chrome.storage.local.get({
   ridgeDelayVal.textContent = `${data.delay}s`;
   setRangeFill(ridgeDelayEl);
   syncPresetGroup('ridgeDelay', parseFloat(data.delay));
+
+  ocrPassesEl.value = data.ocrPasses;
+  ocrPassesVal.textContent = `${data.ocrPasses} pass${data.ocrPasses === 1 ? '' : 'es'}`;
+  setRangeFill(ocrPassesEl);
+  syncPresetGroup('ocrPasses', data.ocrPasses);
+
+  captchaLengthEl.value = data.captchaLength;
+  captchaLengthVal.textContent = `${data.captchaLength} chars`;
+  setRangeFill(captchaLengthEl);
+  syncPresetGroup('captchaLength', data.captchaLength);
+
   ridgeAutosolveActive = !!data.autosolveEnabled;
   updateRidgeUI();
 });
@@ -618,6 +637,18 @@ function updateRidgeUI() {
 ridgeDelayEl.addEventListener('input', () => {
   ridgeDelayVal.textContent = `${ridgeDelayEl.value}s`;
   syncPresetGroup('ridgeDelay', ridgeDelayEl.value);
+});
+
+ocrPassesEl.addEventListener('input', () => {
+  const v = parseInt(ocrPassesEl.value);
+  ocrPassesVal.textContent = `${v} pass${v === 1 ? '' : 'es'}`;
+  syncPresetGroup('ocrPasses', v);
+});
+
+captchaLengthEl.addEventListener('input', () => {
+  const v = parseInt(captchaLengthEl.value);
+  captchaLengthVal.textContent = `${v} chars`;
+  syncPresetGroup('captchaLength', v);
 });
 
 ridgeChangeKeyBtn.addEventListener('click', () => {
@@ -696,6 +727,8 @@ function saveRidgeSettings() {
     inputSelector:   ridgeInputSel.value.trim(),
     submitSelector:  ridgeSubmitSel.value.trim(),
     delay:           parseFloat(ridgeDelayEl.value) || 0,
+    ocrPasses:       parseInt(ocrPassesEl.value)    || 5,
+    captchaLength:   parseInt(captchaLengthEl.value) || 5,
   });
 }
 ridgeSaveBtn.addEventListener('click', () => {

@@ -391,6 +391,36 @@
           </div>
         </div>
 
+        <div class="slider-card">
+          <div class="slider-row">
+            <span class="slider-label">OCR accuracy</span>
+            <span class="slider-value" id="ocrPassesVal">5 passes</span>
+          </div>
+          <div class="slider-desc">Parallel Pixtral passes voted per character. Higher = more accurate, slightly slower &amp; more API calls.</div>
+          <input type="range" class="range" id="ocrPasses" min="1" max="9" step="1" value="5" />
+          <div class="presets" data-group="ocrPasses">
+            <button class="preset" data-val="3">Fast</button>
+            <button class="preset" data-val="5">Balanced</button>
+            <button class="preset" data-val="7">High</button>
+            <button class="preset" data-val="9">Maximum</button>
+          </div>
+        </div>
+
+        <div class="slider-card">
+          <div class="slider-row">
+            <span class="slider-label">CAPTCHA length</span>
+            <span class="slider-value" id="captchaLengthVal">5 chars</span>
+          </div>
+          <div class="slider-desc">Number of characters in the CAPTCHA. HOTH uses 5.</div>
+          <input type="range" class="range" id="captchaLength" min="3" max="10" step="1" value="5" />
+          <div class="presets" data-group="captchaLength">
+            <button class="preset" data-val="4">4</button>
+            <button class="preset" data-val="5">5</button>
+            <button class="preset" data-val="6">6</button>
+            <button class="preset" data-val="8">8</button>
+          </div>
+        </div>
+
         <div class="btn-row">
           <button class="btn btn-success btn-sm" id="ridgeStartBtn">
             <span data-icon="play"></span><span>Start autosolve</span>

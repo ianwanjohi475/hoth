@@ -952,7 +952,7 @@ window.__qfTokens = { QF, ICON };
     if (!autosolveActive) return;
     try {
       const settings = await getSettings();
-      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay } = settings;
+      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses } = settings;
 
       const imgEl = document.querySelector(captchaSelector);
       if (!imgEl || !imgEl.src || imgEl.naturalWidth === 0) {
@@ -961,13 +961,21 @@ window.__qfTokens = { QF, ICON };
         return;
       }
 
-      setStatus('CAPTCHA found · reading…', 'info');
-      const base64 = await imageToBase64(imgEl);
-      setStatus('Solving…', 'info');
+      setStatus('CAPTCHA found · preparing variants…', 'info');
+      const variants = await preprocessVariants(imgEl);
+      if (!variants.length) throw new Error('Could not extract CAPTCHA image');
+
+      setStatus(`Solving · ${ocrPasses}-pass ensemble…`, 'info');
 
       const result = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
-          { type: 'SOLVE_CAPTCHA', imageBase64: base64, apiKey: ridgeApiKey },
+          {
+            type:           'SOLVE_CAPTCHA',
+            imageVariants:  variants,
+            apiKey:         ridgeApiKey,
+            expectedLength: captchaLength,
+            passes:         ocrPasses,
+          },
           (response) => {
             if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
             if (!response) return reject(new Error('No response from background'));
@@ -1028,15 +1036,144 @@ window.__qfTokens = { QF, ICON };
   function getSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get(
-        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay'],
+        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay', 'captchaLength', 'ocrPasses'],
         (result) => resolve({
           ridgeApiKey:     result.ridgeApiKey     || RIDGE_DEFAULT_KEY,
           captchaSelector: result.captchaSelector || '#writercaptcha > div:nth-child(2) > img:nth-child(1)',
           inputSelector:   result.inputSelector   || 'input[required]',
           submitSelector:  result.submitSelector  || 'input[type="submit"].btn.btn-success.btn-large',
           delay:           result.delay !== undefined ? result.delay : 3,
+          captchaLength:   Number.isFinite(result.captchaLength) ? result.captchaLength : 5,
+          ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 5,
         })
       );
+    });
+  }
+
+  // ─── Image preprocessing for OCR ensemble ────────────────────────────────
+  //
+  // Generates several preprocessed variants of the CAPTCHA image. Each variant
+  // emphasises a different visual property (crisp pixels vs smooth, high-
+  // contrast grayscale, binarised B&W) so the vision model sees the puzzle
+  // from multiple angles. The background service then runs parallel OCR
+  // passes against these variants and majority-votes the answer.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function makeCanvas(imgEl, scale, smooth) {
+    const w = (imgEl.naturalWidth  || imgEl.width  || 200) * scale;
+    const h = (imgEl.naturalHeight || imgEl.height || 60)  * scale;
+    const canvas = document.createElement('canvas');
+    canvas.width  = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = smooth;
+    if (smooth) ctx.imageSmoothingQuality = 'high';
+    return { canvas, ctx, w, h };
+  }
+
+  // Variant A: upscale 3× with nearest-neighbour (crisp pixel edges)
+  function variantCrispUpscale(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 3, false);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant B: upscale 2× with bilinear (smooth) — gives vision model larger glyphs
+  function variantSmoothUpscale(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 2, true);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant C: grayscale + high contrast, 3× — strips colour noise, sharpens glyph vs background
+  function variantContrast(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 3, true);
+      ctx.filter = 'grayscale(1) contrast(1.7) brightness(1.05)';
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant D: adaptive binarised B&W, 3× — uses Otsu-like threshold computed
+  // from the image histogram so the threshold adapts to image brightness.
+  function variantBinarise(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 3, false);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d  = id.data;
+
+      // Histogram of luminance
+      const hist = new Uint32Array(256);
+      for (let i = 0; i < d.length; i += 4) {
+        const y = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+        hist[y]++;
+      }
+      // Otsu's method: pick threshold that maximises between-class variance
+      const total = canvas.width * canvas.height;
+      let sum = 0;
+      for (let i = 0; i < 256; i++) sum += i * hist[i];
+      let sumB = 0, wB = 0, varMax = 0, threshold = 128;
+      for (let t = 0; t < 256; t++) {
+        wB += hist[t];
+        if (!wB) continue;
+        const wF = total - wB;
+        if (!wF) break;
+        sumB += t * hist[t];
+        const mB = sumB / wB;
+        const mF = (sum - sumB) / wF;
+        const between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > varMax) { varMax = between; threshold = t; }
+      }
+
+      for (let i = 0; i < d.length; i += 4) {
+        const y = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+        const v = y > threshold ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(id, 0, 0);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  async function preprocessVariants(imgEl) {
+    // Direct same-origin canvas path — works on thehoth.com
+    const direct = [
+      variantCrispUpscale(imgEl),
+      variantSmoothUpscale(imgEl),
+      variantContrast(imgEl),
+      variantBinarise(imgEl),
+    ].filter(Boolean);
+    if (direct.length) return direct;
+
+    // Cross-origin fallback: reload image via crossOrigin='anonymous' and try again
+    try {
+      const cleanImg = await loadCleanImage(imgEl.src);
+      return [
+        variantCrispUpscale(cleanImg),
+        variantSmoothUpscale(cleanImg),
+        variantContrast(cleanImg),
+        variantBinarise(cleanImg),
+      ].filter(Boolean);
+    } catch (_) {
+      // Last resort: raw fetch → base64 (single variant)
+      const single = await fetchImageAsBase64(imgEl.src);
+      return single ? [single] : [];
+    }
+  }
+
+  function loadCleanImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload  = () => resolve(img);
+      img.onerror = () => reject(new Error('image load failed'));
+      img.src = url.split('?')[0] + '?_qf=' + Date.now();
     });
   }
 
