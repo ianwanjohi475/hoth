@@ -986,16 +986,37 @@ window.__qfTokens = { QF, ICON };
       });
 
       if (!autosolveActive) return;
-      setStatus(`Solved · ${result}`, 'ok');
 
+      // Locate the answer input
       const inputEl = document.querySelector(inputSelector);
-      if (inputEl) {
-        inputEl.focus();
-        inputEl.value = result;
-        inputEl.dispatchEvent(new Event('input',  { bubbles: true }));
-        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-        inputEl.blur();
+      if (!inputEl) {
+        setStatus('Answer input not found', 'err');
+        scheduleNext(2000);
+        return;
       }
+
+      // ── React/Vue-safe native value setter ──
+      // Mirrors the article composer's setNativeValue() pattern. Uses the
+      // prototype's value descriptor so frameworks tracking the input's
+      // state register the change. Falls back to direct assignment.
+      const proto  = window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      inputEl.focus();
+      if (setter) setter.call(inputEl, result); else inputEl.value = result;
+      inputEl.dispatchEvent(new Event('input',  { bubbles: true }));
+      inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+      // ── Read-back verification ──
+      // If anything (maxlength, transform, JS handler) changed the value
+      // between assignment and read, surface the drift in the status.
+      const filled = inputEl.value;
+      if (filled !== result) {
+        console.warn('[Quillforge Ridge] Filled value differs from OCR:', { ocr: result, filled });
+        setStatus(`Filled "${filled}" · OCR "${result}"`, 'warn');
+      } else {
+        setStatus(`Solved · ${result}`, 'ok');
+      }
+      inputEl.blur();
 
       const delayMs = (parseFloat(delay) || 0) * 1000;
       if (delayMs > 0) {
