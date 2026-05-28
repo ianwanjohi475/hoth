@@ -4,204 +4,290 @@
   <meta charset="UTF-8" />
   <title>Quillforge — Spintax Error Detected</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
-      --bg-deep: #0B0E14;
-      --surface: #161B25;
-      --border:  #2E374A;
-      --text:    #E8EDF5;
-      --muted:   #9BA8BD;
-      --accent:  #4F8BFF;
-      --danger:  #F25B7A;
-      --warning: #F2B547;
-    }
-    html, body { height: 100%; }
-    body {
-      font-family: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-      color: var(--text);
-      min-height: 100vh;
-      display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(ellipse at top, #2A0E18 0%, #0B0E14 70%);
-      overflow: hidden;
-      position: relative;
-      animation: bg-pulse 1.4s ease-in-out infinite alternate;
-    }
-    @keyframes bg-pulse {
-      from { background: radial-gradient(ellipse at top, #2A0E18 0%, #0B0E14 70%); }
-      to   { background: radial-gradient(ellipse at top, #4A1228 0%, #160817 70%); }
+      --bg:         #08090B;
+      --surface:    #0E1014;
+      --surface-1:  #15171C;
+      --border:     #262A33;
+      --border-2:   #353A45;
+      --fg:         #F5F6F8;
+      --fg-1:       #B4B8C2;
+      --fg-2:       #797E89;
+      --accent:     #8B5CF6;
+      --accent-hi:  #A78BFA;
+      --accent-lo:  #6D28D9;
+      --danger:     #F87171;
+      --danger-hi:  #FCA5A5;
+      --danger-lo:  #DC2626;
+      --warning:    #FBBF24;
     }
 
-    /* Subtle scanline overlay */
+    html, body { height: 100%; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg);
+      overflow: hidden;
+      position: relative;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Ambient pulsing gradient backdrop */
     body::before {
-      content: '';
-      position: absolute; inset: 0;
+      content: ''; position: absolute; inset: 0;
       background:
-        radial-gradient(circle at 20% 30%, rgba(242,91,122,0.10), transparent 50%),
-        radial-gradient(circle at 80% 70%, rgba(242,181,71,0.08),  transparent 50%);
+        radial-gradient(ellipse 60% 50% at 20% 30%, rgba(248,113,113,0.18), transparent 60%),
+        radial-gradient(ellipse 50% 40% at 80% 70%, rgba(251,191,36,0.10),  transparent 60%),
+        radial-gradient(ellipse 90% 70% at 50% 50%, rgba(139,92,246,0.06),  transparent 70%);
       pointer-events: none;
+      animation: bg-pulse 2.2s ease-in-out infinite alternate;
+    }
+    @keyframes bg-pulse {
+      from { opacity: 0.6; }
+      to   { opacity: 1.0; }
+    }
+
+    /* Subtle grid texture overlay */
+    body::after {
+      content: ''; position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, #000 30%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, #000 30%, transparent 70%);
     }
 
     .panel {
       position: relative; z-index: 1;
-      width: 100%; max-width: 560px;
+      width: 100%; max-width: 540px;
       margin: 24px;
-      background: rgba(22,27,37,0.85);
-      border: 1px solid var(--border);
+      padding: 36px 40px 32px;
+      background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface) 100%);
+      border: 1px solid var(--border-2);
       border-radius: 24px;
-      padding: 40px 44px 36px;
       box-shadow:
-        0 24px 64px rgba(0,0,0,0.6),
-        0 0 0 1px rgba(242,91,122,0.20),
-        0 0 60px rgba(242,91,122,0.22);
-      backdrop-filter: blur(12px);
-      animation: panel-pulse 1.4s ease-in-out infinite alternate;
+        0 1px 0 rgba(255,255,255,0.05) inset,
+        0 32px 80px rgba(0,0,0,0.70),
+        0 0 0 1px rgba(248,113,113,0.25),
+        0 0 80px rgba(248,113,113,0.28);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      animation: panel-glow 2.2s ease-in-out infinite alternate;
     }
-    @keyframes panel-pulse {
-      from { box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(242,91,122,0.20), 0 0 60px rgba(242,91,122,0.20); }
-      to   { box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(242,91,122,0.55), 0 0 100px rgba(242,91,122,0.45); }
+    @keyframes panel-glow {
+      from { box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 32px 80px rgba(0,0,0,0.70), 0 0 0 1px rgba(248,113,113,0.25), 0 0  80px rgba(248,113,113,0.28); }
+      to   { box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 32px 80px rgba(0,0,0,0.70), 0 0 0 1px rgba(248,113,113,0.55), 0 0 140px rgba(248,113,113,0.55); }
     }
 
-    .panel-header {
-      display: flex; align-items: center; gap: 14px; margin-bottom: 28px;
+    /* Eyebrow row */
+    .eyebrow {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 20px;
     }
-    .panel-icon {
-      width: 52px; height: 52px; border-radius: 14px;
-      background: linear-gradient(135deg, #F25B7A, #B22D52);
-      color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 8px 24px rgba(242,91,122,0.5);
-      flex-shrink: 0;
+    .eyebrow-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 10px var(--danger);
+      animation: eyebrow-pulse 1.2s ease-in-out infinite;
     }
-    .panel-icon svg { width: 26px; height: 26px; }
-    .panel-eyebrow {
+    @keyframes eyebrow-pulse {
+      0%, 100% { transform: scale(1);    box-shadow: 0 0 8px var(--danger); }
+      50%      { transform: scale(1.4);  box-shadow: 0 0 16px var(--danger); }
+    }
+    .eyebrow-label {
       font-size: 11px; font-weight: 700;
-      color: var(--danger); letter-spacing: 0.16em;
+      color: var(--danger); letter-spacing: 0.18em;
       text-transform: uppercase;
     }
-    .panel-title {
-      font-size: 28px; font-weight: 700;
-      letter-spacing: -0.02em; margin-top: 4px;
+    .eyebrow-brand {
+      margin-left: auto;
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10.5px; color: var(--fg-2);
+      font-weight: 500; letter-spacing: 0.10em;
+      text-transform: uppercase;
+      font-family: "JetBrains Mono","SF Mono",Menlo,monospace;
+    }
+    .eyebrow-brand .brand-mark {
+      width: 14px; height: 14px; border-radius: 4px;
+      background: linear-gradient(135deg, var(--accent-hi), var(--accent-lo));
     }
 
-    .panel-desc {
-      font-size: 15px; color: var(--muted);
-      line-height: 1.55; margin-bottom: 28px;
+    /* Headline + body */
+    .headline {
+      display: flex; align-items: flex-start; gap: 16px;
+      margin-bottom: 14px;
+    }
+    .headline-icon {
+      width: 52px; height: 52px;
+      flex-shrink: 0;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--danger-hi) 0%, var(--danger-lo) 100%);
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.20) inset,
+        0 8px 24px rgba(248,113,113,0.45);
+    }
+    .headline-icon svg { width: 26px; height: 26px; }
+    .headline-text { padding-top: 4px; }
+    .headline-title {
+      font-size: 26px; font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+    }
+    .headline-sub {
+      font-size: 14px; color: var(--fg-1);
+      line-height: 1.55; margin-top: 8px;
+      max-width: 38ch;
     }
 
+    /* Timer card */
     .timer-card {
-      background: var(--bg-deep);
+      margin-top: 26px;
+      padding: 20px 22px;
+      background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 22px 24px;
-      margin-bottom: 24px;
-      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .timer-meta {
+      display: flex; flex-direction: column; gap: 4px;
+      flex: 1;
     }
     .timer-label {
-      font-size: 11px; font-weight: 600;
-      color: var(--muted); letter-spacing: 0.12em;
+      font-size: 10.5px; font-weight: 600;
+      color: var(--fg-2); letter-spacing: 0.14em;
       text-transform: uppercase;
     }
     .timer-value {
       font-family: "JetBrains Mono","SF Mono",Menlo,monospace;
-      font-size: 38px; font-weight: 600;
+      font-size: 40px; font-weight: 600;
       color: var(--danger);
       font-variant-numeric: tabular-nums;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.03em;
       line-height: 1;
-      margin-top: 4px;
+      text-shadow: 0 0 24px rgba(248,113,113,0.45);
     }
-    .timer-pulse {
-      width: 12px; height: 12px; border-radius: 50%;
-      background: var(--danger); flex-shrink: 0;
-      animation: dot-pulse 0.8s ease-in-out infinite;
+    .timer-ring {
+      position: relative; width: 56px; height: 56px;
+      flex-shrink: 0;
     }
-    @keyframes dot-pulse {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50%      { transform: scale(1.35); opacity: 0.6; }
-    }
+    .timer-ring svg { transform: rotate(-90deg); }
+    .timer-ring-bg { stroke: var(--border-2); }
+    .timer-ring-fg { stroke: var(--danger); transition: stroke-dashoffset 1s linear; }
 
-    .stop-btn {
-      width: 100%;
-      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
-      padding: 14px 24px;
-      background: var(--danger); color: #fff;
-      border: none; border-radius: 12px;
-      font-family: inherit;
-      font-size: 14px; font-weight: 600; letter-spacing: -0.005em;
-      cursor: pointer;
-      box-shadow: 0 8px 24px rgba(242,91,122,0.4);
-      transition: transform 150ms cubic-bezier(.2,.8,.2,1), box-shadow 150ms;
+    /* Actions */
+    .actions {
+      margin-top: 20px;
+      display: flex; gap: 10px;
     }
-    .stop-btn svg { width: 16px; height: 16px; }
-    .stop-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(242,91,122,0.55); }
-    .stop-btn:active { transform: translateY(0); }
-    .stop-btn.is-stopped {
-      background: var(--surface);
-      color: var(--muted);
+    .btn {
+      flex: 1;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 14px 20px;
+      font-family: inherit;
+      font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    .btn svg { width: 16px; height: 16px; }
+    .btn-danger {
+      background: linear-gradient(180deg, var(--danger-hi) 0%, var(--danger) 100%);
+      color: #4A0E1A;
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.25) inset,
+        0 8px 24px rgba(248,113,113,0.45);
+    }
+    .btn-danger:hover { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.30) inset, 0 12px 30px rgba(248,113,113,0.55); }
+    .btn-danger:active { transform: translateY(0); }
+    .btn-danger.is-stopped {
+      background: var(--surface-1);
+      color: var(--fg-2);
       box-shadow: none;
       cursor: default;
     }
 
+    /* Foot */
     .panel-foot {
-      margin-top: 22px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
       display: flex; justify-content: space-between;
-      font-size: 11px; color: var(--muted);
+      font-size: 11px; color: var(--fg-2);
       letter-spacing: 0.04em;
-    }
-    .panel-foot .tag {
       font-family: "JetBrains Mono","SF Mono",Menlo,monospace;
-      color: var(--accent);
     }
+    .panel-foot .label { color: var(--fg-2); }
+    .panel-foot .value { color: var(--accent-hi); }
   </style>
 </head>
 <body>
 
   <audio id="alarm" src="beep.wav" autoplay loop></audio>
 
-  <div class="panel" id="panel">
-    <div class="panel-header">
-      <div class="panel-icon">
+  <div class="panel" id="panel" role="alertdialog" aria-labelledby="title">
+    <div class="eyebrow">
+      <span class="eyebrow-dot"></span>
+      <span class="eyebrow-label">Critical Alert · Spintax</span>
+      <span class="eyebrow-brand"><span class="brand-mark"></span>Quillforge</span>
+    </div>
+
+    <div class="headline">
+      <div class="headline-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>
           <line x1="12" y1="9" x2="12" y2="13"/>
           <line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>
       </div>
-      <div>
-        <div class="panel-eyebrow">Quillforge · Critical Alert</div>
-        <div class="panel-title">Spintax error detected</div>
+      <div class="headline-text">
+        <h1 class="headline-title" id="title">Spintax error detected</h1>
+        <p class="headline-sub">The article tab has been closed automatically. The client requested spintax variation in this deliverable — review the brief before resubmitting.</p>
       </div>
-    </div>
-
-    <div class="panel-desc">
-      The article tab has been closed automatically. Review the assignment before resubmitting — the client requested spintax variation in the deliverable.
     </div>
 
     <div class="timer-card">
-      <div>
-        <div class="timer-label">Alarm time remaining</div>
-        <div class="timer-value" id="countdown">30:00</div>
+      <div class="timer-meta">
+        <span class="timer-label">Alarm time remaining</span>
+        <span class="timer-value" id="countdown">30:00</span>
       </div>
-      <div class="timer-pulse" id="timerDot" aria-hidden="true"></div>
+      <div class="timer-ring" aria-hidden="true">
+        <svg width="56" height="56" viewBox="0 0 56 56">
+          <circle class="timer-ring-bg" cx="28" cy="28" r="24" fill="none" stroke-width="3"/>
+          <circle class="timer-ring-fg" id="timerRing" cx="28" cy="28" r="24" fill="none" stroke-width="3"
+                  stroke-dasharray="150.8" stroke-dashoffset="0" stroke-linecap="round"/>
+        </svg>
+      </div>
     </div>
 
-    <button class="stop-btn" id="stopBtn" type="button">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-        <line x1="22" y1="9" x2="16" y2="15"/>
-        <line x1="16" y1="9" x2="22" y2="15"/>
-      </svg>
-      <span>Stop alarm</span>
-    </button>
+    <div class="actions">
+      <button class="btn btn-danger" id="stopBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <line x1="22" y1="9" x2="16" y2="15"/>
+          <line x1="16" y1="9" x2="22" y2="15"/>
+        </svg>
+        <span>Stop alarm</span>
+      </button>
+    </div>
 
     <div class="panel-foot">
-      <span>Detected <span id="timestamp" class="tag">—</span></span>
-      <span class="tag">QUILLFORGE</span>
+      <span><span class="label">Detected at</span> <span class="value" id="timestamp">—</span></span>
+      <span><span class="value">QUILLFORGE</span> v2.0</span>
     </div>
   </div>
 
   <script>
-    const TOTAL = 30 * 60;
+    const TOTAL  = 30 * 60;
+    const CIRC   = 2 * Math.PI * 24; // ~150.8
     let remaining = TOTAL;
     let ticker    = null;
     let stopped   = false;
@@ -210,11 +296,17 @@
     const countdownEl = document.getElementById('countdown');
     const timestampEl = document.getElementById('timestamp');
     const stopBtn     = document.getElementById('stopBtn');
-    const panel       = document.getElementById('panel');
-    const timerDot    = document.getElementById('timerDot');
+    const ring        = document.getElementById('timerRing');
+    ring.setAttribute('stroke-dasharray', CIRC.toString());
 
     const fmt = s => String(Math.floor(s / 60)).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
     timestampEl.textContent = new Date().toLocaleTimeString();
+
+    function updateRing() {
+      const off = CIRC * (1 - remaining / TOTAL);
+      ring.setAttribute('stroke-dashoffset', off.toString());
+    }
+    updateRing();
 
     function stopAlarm() {
       if (stopped) return;
@@ -223,10 +315,9 @@
       alarm.currentTime = 0;
       clearInterval(ticker);
       countdownEl.textContent = '00:00';
-      document.body.style.animation = 'none';
-      document.body.style.background = '#0B0E14';
-      panel.style.animation = 'none';
-      timerDot.style.animation = 'none';
+      document.body.style.background = '#08090B';
+      document.querySelector('.panel').style.animation = 'none';
+      document.body.querySelector('.eyebrow-dot').style.animation = 'none';
       stopBtn.classList.add('is-stopped');
       stopBtn.querySelector('span').textContent = 'Alarm stopped';
       stopBtn.disabled = true;
@@ -235,6 +326,7 @@
     ticker = setInterval(() => {
       remaining--;
       countdownEl.textContent = fmt(Math.max(remaining, 0));
+      updateRing();
       if (remaining <= 0) stopAlarm();
     }, 1000);
 

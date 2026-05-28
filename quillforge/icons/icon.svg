@@ -1,20 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4F8BFF"/>
-      <stop offset="1" stop-color="#2B5BD7"/>
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#6D28D9"/>
     </linearGradient>
     <linearGradient id="mark" x1="32" y1="24" x2="96" y2="104" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#D8E6FF"/>
+      <stop offset="1" stop-color="#EDE9FE"/>
     </linearGradient>
+    <radialGradient id="spark" cx="44" cy="102" r="14" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34D399" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#34D399" stop-opacity="0"/>
+    </radialGradient>
   </defs>
   <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="1"/>
-  <!-- Stylised quill nib: angular blade + spine -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1"/>
+  <circle cx="44" cy="102" r="14" fill="url(#spark)"/>
   <path d="M40 88 L78 30 L94 30 L94 46 L56 104 L40 104 Z" fill="url(#mark)"/>
-  <!-- Nib slit -->
-  <path d="M52 96 L78 54" stroke="#2B5BD7" stroke-width="3" stroke-linecap="round"/>
-  <!-- Ink drop / spark -->
-  <circle cx="44" cy="102" r="5" fill="#3FD4A8"/>
+  <path d="M52 96 L78 54" stroke="#6D28D9" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="44" cy="102" r="5" fill="#34D399"/>
 </svg>

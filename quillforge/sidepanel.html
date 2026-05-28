@@ -9,46 +9,82 @@
 
 <div class="app">
 
-  <!-- ===== Header ===== -->
+  <!-- ═════════════════════════════════════ Header ════ -->
   <header class="app-header">
     <div class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/><path d="M12 17H7"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/>
+        <path d="m16 8-9 9"/>
+        <path d="M12 17H7"/>
+      </svg>
     </div>
     <div class="brand-text">
       <span class="brand-name">Quillforge</span>
-      <span class="brand-sub">AI Writing Automation Suite</span>
+      <span class="brand-sub">Writing automation suite</span>
     </div>
-    <div class="master-pill" id="masterPill" data-state="active" role="status" aria-live="polite">
-      <span class="dot"></span><span id="masterPillText">Active</span>
-    </div>
+    <span class="header-spacer"></span>
+    <button class="header-action" id="reloadBtn" title="Reload settings" aria-label="Reload settings">
+      <span data-icon="refresh"></span>
+    </button>
   </header>
 
-  <!-- ===== Section: Edit Watcher ===== -->
-  <section class="section" data-section="watcher" data-open="true">
-    <div class="section-head" data-target="watcher" tabindex="0" role="button" aria-expanded="true">
-      <span class="section-icon" data-icon="eye"></span>
-      <span class="section-title">Edit Watcher</span>
-      <span class="section-badge" data-state="on" id="watcherBadge">On</span>
-      <span class="section-chev" data-icon="chevron"></span>
+  <!-- ═════════════════════════════════ Status hero ════ -->
+  <section class="hero" aria-label="Module status">
+    <div class="hero-top">
+      <div class="hero-status-pill" id="heroPill" data-state="active">
+        <span class="pulse"></span><span id="heroPillText">Running</span>
+      </div>
+      <span class="hero-summary"><strong id="heroCount">3</strong> of 3 modules active</span>
     </div>
-    <div class="section-body">
-      <div class="section-body-inner">
-
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Edit watcher</div>
-            <div class="row-desc">Scan thehoth.com/writer for the next Edit button</div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="watcherEnabled" />
-            <span class="track"></span>
-          </label>
+    <div class="hero-modules">
+      <button class="hero-chip" data-chip="watcher" data-active="true" data-target="modWatcher" type="button">
+        <div class="hero-chip-head">
+          <span class="hero-chip-icon" data-icon="eye"></span>
+          <span class="hero-chip-dot"></span>
         </div>
+        <span class="hero-chip-name">Watcher</span>
+        <span class="hero-chip-state" id="chipWatcherState">Idle</span>
+      </button>
+      <button class="hero-chip" data-chip="spintax" data-active="true" data-target="modSpintax" type="button">
+        <div class="hero-chip-head">
+          <span class="hero-chip-icon" data-icon="alert"></span>
+          <span class="hero-chip-dot"></span>
+        </div>
+        <span class="hero-chip-name">Spintax</span>
+        <span class="hero-chip-state" id="chipSpintaxState">Idle</span>
+      </button>
+      <button class="hero-chip" data-chip="writer" data-active="true" data-target="modWriter" type="button">
+        <div class="hero-chip-head">
+          <span class="hero-chip-icon" data-icon="feather"></span>
+          <span class="hero-chip-dot"></span>
+        </div>
+        <span class="hero-chip-name">Composer</span>
+        <span class="hero-chip-state" id="chipWriterState">Idle</span>
+      </button>
+    </div>
+  </section>
 
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Auto-open article</div>
-            <div class="row-desc">Open the article in a new tab and close /writer</div>
+  <!-- ═════════════════════════════ Module: Watcher ════ -->
+  <article class="module" id="modWatcher" data-open="true" data-active="true">
+    <header class="module-head" data-toggle role="button" tabindex="0" aria-expanded="true">
+      <div class="module-icon" data-icon="eye"></div>
+      <div class="module-meta">
+        <div class="module-title">Edit Watcher</div>
+        <div class="module-sub" id="watcherSub">Every 10s · 10s alarm</div>
+      </div>
+      <label class="switch" data-stop>
+        <input type="checkbox" id="watcherEnabled" />
+        <span class="track"></span>
+      </label>
+      <span class="module-chev" data-icon="chevron"></span>
+    </header>
+    <div class="module-body">
+      <div class="module-body-inner">
+
+        <div class="setting">
+          <div class="setting-meta">
+            <div class="setting-label">Auto-open article</div>
+            <div class="setting-desc">When an Edit button is found, open the article in a new tab and close the writer page.</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="autoClick" />
@@ -56,12 +92,12 @@
           </label>
         </div>
 
-        <div class="slider">
-          <div class="slider-head">
+        <div class="slider-card">
+          <div class="slider-row">
             <span class="slider-label">Alarm duration</span>
-            <span class="slider-val" id="alarmDurationVal">10s</span>
+            <span class="slider-value" id="alarmDurationVal">10s</span>
           </div>
-          <div class="slider-desc">How long the audio alarm rings when Edit is found</div>
+          <div class="slider-desc">How long the audio alarm rings when an Edit button is found.</div>
           <input type="range" class="range" id="alarmDuration" min="1" max="60" value="10" />
           <div class="presets" data-group="alarm">
             <button class="preset" data-val="5">5s</button>
@@ -72,12 +108,12 @@
           </div>
         </div>
 
-        <div class="slider">
-          <div class="slider-head">
+        <div class="slider-card">
+          <div class="slider-row">
             <span class="slider-label">Check interval</span>
-            <span class="slider-val" id="checkIntervalVal">10s</span>
+            <span class="slider-value" id="checkIntervalVal">10s</span>
           </div>
-          <div class="slider-desc" id="intervalDesc">Scan for the Edit button every 10 seconds</div>
+          <div class="slider-desc" id="intervalDesc">Scan for the Edit button every 10 seconds.</div>
           <input type="range" class="range" id="checkInterval" min="1" max="120" value="10" />
           <div class="presets" data-group="interval">
             <button class="preset" data-val="5">5s</button>
@@ -101,34 +137,29 @@
 
       </div>
     </div>
-  </section>
+  </article>
 
-  <!-- ===== Section: Spintax Scanner ===== -->
-  <section class="section" data-section="spintax" data-open="true">
-    <div class="section-head" data-target="spintax" tabindex="0" role="button" aria-expanded="true">
-      <span class="section-icon" data-icon="alert"></span>
-      <span class="section-title">Spintax Scanner</span>
-      <span class="section-badge" data-state="on" id="spintaxBadge">On</span>
-      <span class="section-chev" data-icon="chevron"></span>
-    </div>
-    <div class="section-body">
-      <div class="section-body-inner">
+  <!-- ═════════════════════════════ Module: Spintax ════ -->
+  <article class="module" id="modSpintax" data-open="true" data-active="true">
+    <header class="module-head" data-toggle role="button" tabindex="0" aria-expanded="true">
+      <div class="module-icon" data-icon="alert"></div>
+      <div class="module-meta">
+        <div class="module-title">Spintax Scanner</div>
+        <div class="module-sub" id="spintaxSub">Email alerts on detection</div>
+      </div>
+      <label class="switch" data-stop>
+        <input type="checkbox" id="spintaxEnabled" />
+        <span class="track"></span>
+      </label>
+      <span class="module-chev" data-icon="chevron"></span>
+    </header>
+    <div class="module-body">
+      <div class="module-body-inner">
 
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Spintax detection</div>
-            <div class="row-desc">Watch every page for “requires spintax” errors</div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="spintaxEnabled" />
-            <span class="track"></span>
-          </label>
-        </div>
-
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Email notifications</div>
-            <div class="row-desc">Send an EmailJS alert when spintax is detected</div>
+        <div class="setting">
+          <div class="setting-meta">
+            <div class="setting-label">Email notifications</div>
+            <div class="setting-desc">Send an EmailJS alert when a spintax error is detected.</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="emailEnabled" />
@@ -138,39 +169,34 @@
 
         <div class="status-row">
           <span class="status-dot" data-tone="warn"></span>
-          <span>On trigger: closes the article tab, opens a flashing alarm screen for 30 minutes.</span>
+          <span>On detection: the article tab is closed and a full-screen alarm opens for 30 minutes.</span>
         </div>
 
       </div>
     </div>
-  </section>
+  </article>
 
-  <!-- ===== Section: Article Composer ===== -->
-  <section class="section" data-section="writer" data-open="true">
-    <div class="section-head" data-target="writer" tabindex="0" role="button" aria-expanded="true">
-      <span class="section-icon" data-icon="feather"></span>
-      <span class="section-title">Article Composer</span>
-      <span class="section-badge" data-state="on" id="writerBadge">On</span>
-      <span class="section-chev" data-icon="chevron"></span>
-    </div>
-    <div class="section-body">
-      <div class="section-body-inner">
+  <!-- ═════════════════════════════ Module: Composer ════ -->
+  <article class="module" id="modWriter" data-open="true" data-active="true">
+    <header class="module-head" data-toggle role="button" tabindex="0" aria-expanded="true">
+      <div class="module-icon" data-icon="feather"></div>
+      <div class="module-meta">
+        <div class="module-title">Article Composer</div>
+        <div class="module-sub" id="writerSub">Manual · 5s submit wait</div>
+      </div>
+      <label class="switch" data-stop>
+        <input type="checkbox" id="writerEnabled" />
+        <span class="track"></span>
+      </label>
+      <span class="module-chev" data-icon="chevron"></span>
+    </header>
+    <div class="module-body">
+      <div class="module-body-inner">
 
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Article composer</div>
-            <div class="row-desc">Enable Groq-powered AI generation on job pages</div>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="writerEnabled" />
-            <span class="track"></span>
-          </label>
-        </div>
-
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Auto mode</div>
-            <div class="row-desc">Start composing automatically on detected job pages</div>
+        <div class="setting">
+          <div class="setting-meta">
+            <div class="setting-label">Auto mode</div>
+            <div class="setting-desc">Start composing automatically when a job page is detected.</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="autoMode" />
@@ -178,10 +204,10 @@
           </label>
         </div>
 
-        <div class="row">
-          <div class="row-text">
-            <div class="row-label">Auto submit</div>
-            <div class="row-desc">Submit the assignment after the wait period</div>
+        <div class="setting">
+          <div class="setting-meta">
+            <div class="setting-label">Auto submit</div>
+            <div class="setting-desc">Submit the assignment automatically after the wait period.</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="autoSubmit" />
@@ -189,12 +215,12 @@
           </label>
         </div>
 
-        <div class="slider">
-          <div class="slider-head">
+        <div class="slider-card">
+          <div class="slider-row">
             <span class="slider-label">Wait before submit</span>
-            <span class="slider-val" id="waitTimeVal">5s</span>
+            <span class="slider-value" id="waitTimeVal">5s</span>
           </div>
-          <div class="slider-desc">Countdown before the auto-submit fires</div>
+          <div class="slider-desc">Countdown before the auto-submit fires.</div>
           <input type="range" class="range" id="waitTime" min="0" max="30" value="5" />
           <div class="presets" data-group="wait">
             <button class="preset" data-val="0">0s</button>
@@ -205,7 +231,7 @@
         </div>
 
         <div class="btn-row">
-          <button class="btn btn-success btn-sm" id="writeNowBtn">
+          <button class="btn btn-primary btn-sm" id="writeNowBtn">
             <span data-icon="feather"></span><span>Compose now</span>
           </button>
           <button class="btn btn-ghost btn-sm" id="testApiBtn">
@@ -215,26 +241,30 @@
 
       </div>
     </div>
-  </section>
+  </article>
 
-  <!-- ===== Section: Groq API ===== -->
-  <section class="section" data-section="api" data-open="false">
-    <div class="section-head" data-target="api" tabindex="0" role="button" aria-expanded="false">
-      <span class="section-icon" data-icon="key"></span>
-      <span class="section-title">Groq API</span>
-      <span class="section-badge is-tag">Llama 3.1</span>
-      <span class="section-chev" data-icon="chevron"></span>
-    </div>
-    <div class="section-body">
-      <div class="section-body-inner">
+  <!-- ═════════════════════════════ Module: Groq API ════ -->
+  <article class="module" id="modApi" data-open="false">
+    <header class="module-head" data-toggle role="button" tabindex="0" aria-expanded="false">
+      <div class="module-icon" data-icon="key"></div>
+      <div class="module-meta">
+        <div class="module-title">Groq API</div>
+        <div class="module-sub">Llama 3.1 · 8B Instant</div>
+      </div>
+      <span class="module-chev" data-icon="chevron"></span>
+    </header>
+    <div class="module-body">
+      <div class="module-body-inner">
 
         <div class="api-card">
-          <div class="field-label">Groq API key</div>
+          <div class="field-label"><span data-icon="key"></span>API key</div>
           <div class="api-key-show" id="apiKeyDisplay">
-            <span data-icon="key"></span><span id="apiKeyText">gsk_••••••••••••••••••••••••••••••••</span>
+            <span data-icon="lock"></span>
+            <span id="apiKeyText">gsk_••••••••••••••••••••••••••••••••</span>
           </div>
           <div class="api-locked" id="lockStatus">
-            <span data-icon="lock"></span><span>Protected — enter PIN to change</span>
+            <span data-icon="lock"></span>
+            <span>Protected — enter PIN to change</span>
           </div>
 
           <div class="pin-area" id="pinArea">
@@ -263,9 +293,9 @@
         </div>
 
         <div class="api-card">
-          <div class="field-label">Model</div>
+          <div class="field-label"><span data-icon="cpu"></span>Model</div>
           <div class="model-line">
-            <span class="model-badge"><span class="pulse"></span>llama-3.1-8b-instant</span>
+            <span class="model-badge"><span class="pulse-dot"></span>llama-3.1-8b-instant</span>
             <span class="fixed-note">Fixed</span>
           </div>
         </div>
@@ -277,26 +307,30 @@
 
       </div>
     </div>
-  </section>
+  </article>
 
-  <!-- ===== Section: Ridge Neural Solver ===== -->
-  <section class="section" data-section="ridge" data-open="false">
-    <div class="section-head" data-target="ridge" tabindex="0" role="button" aria-expanded="false">
-      <span class="section-icon" data-icon="bolt"></span>
-      <span class="section-title">Ridge Neural Solver</span>
-      <span class="section-badge is-tag">CAPTCHA</span>
-      <span class="section-chev" data-icon="chevron"></span>
-    </div>
-    <div class="section-body">
-      <div class="section-body-inner">
+  <!-- ═════════════════════════ Module: Ridge Solver ════ -->
+  <article class="module" id="modRidge" data-open="false">
+    <header class="module-head" data-toggle role="button" tabindex="0" aria-expanded="false">
+      <div class="module-icon" data-icon="bolt"></div>
+      <div class="module-meta">
+        <div class="module-title">Ridge Neural Solver</div>
+        <div class="module-sub">Mistral Pixtral · CAPTCHA</div>
+      </div>
+      <span class="module-chev" data-icon="chevron"></span>
+    </header>
+    <div class="module-body">
+      <div class="module-body-inner">
 
         <div class="api-card">
-          <div class="field-label">Mistral API key</div>
+          <div class="field-label"><span data-icon="key"></span>Mistral API key</div>
           <div class="api-key-show" id="ridgeKeyDisplay">
-            <span data-icon="key"></span><span id="ridgeKeyText">••••••••••••••••••••••••••••••••</span>
+            <span data-icon="lock"></span>
+            <span id="ridgeKeyText">••••••••••••••••••••••••••••••••</span>
           </div>
           <div class="api-locked" id="ridgeLockStatus">
-            <span data-icon="lock"></span><span>Protected — enter PIN to change</span>
+            <span data-icon="lock"></span>
+            <span>Protected — enter PIN to change</span>
           </div>
 
           <div class="pin-area" id="ridgePinArea">
@@ -325,29 +359,29 @@
         </div>
 
         <div class="api-card">
-          <div class="field-label">Element selectors</div>
+          <div class="field-label"><span data-icon="crosshair"></span>Element selectors</div>
           <div class="stack gap-2">
             <div>
-              <div class="row-desc" style="margin-bottom:5px">CAPTCHA image</div>
+              <div class="setting-desc" style="margin-bottom:6px">CAPTCHA image</div>
               <input class="text-input" id="ridgeCaptchaSel" />
             </div>
             <div>
-              <div class="row-desc" style="margin-bottom:5px">Answer input</div>
+              <div class="setting-desc" style="margin-bottom:6px">Answer input</div>
               <input class="text-input" id="ridgeInputSel" />
             </div>
             <div>
-              <div class="row-desc" style="margin-bottom:5px">Submit button</div>
+              <div class="setting-desc" style="margin-bottom:6px">Submit button</div>
               <input class="text-input" id="ridgeSubmitSel" />
             </div>
           </div>
         </div>
 
-        <div class="slider">
-          <div class="slider-head">
+        <div class="slider-card">
+          <div class="slider-row">
             <span class="slider-label">Submit delay</span>
-            <span class="slider-val" id="ridgeDelayVal">3s</span>
+            <span class="slider-value" id="ridgeDelayVal">3s</span>
           </div>
-          <div class="slider-desc">Pause after filling, before clicking submit</div>
+          <div class="slider-desc">Pause after filling, before clicking submit.</div>
           <input type="range" class="range" id="ridgeDelay" min="0" max="30" step="0.5" value="3" />
           <div class="presets" data-group="ridgeDelay">
             <button class="preset" data-val="0">0s</button>
@@ -373,15 +407,15 @@
 
       </div>
     </div>
-  </section>
+  </article>
 
-  <!-- ===== Footer actions ===== -->
+  <!-- ═════════════════════════════════════ Footer ════ -->
   <footer class="app-footer">
     <button class="btn btn-primary" id="saveBtn">
-      <span data-icon="save"></span><span>Save settings</span>
+      <span data-icon="save"></span><span>Save changes</span>
     </button>
     <button class="btn btn-danger" id="stopAllBtn">
-      <span data-icon="volume-x"></span><span>Stop all alarms</span>
+      <span data-icon="volume-x"></span><span>Stop alarms</span>
     </button>
   </footer>
 

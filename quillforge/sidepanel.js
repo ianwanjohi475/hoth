@@ -1,5 +1,5 @@
 // ============================================================================
-//  Quillforge — Side Panel Controller
+//  Quillforge — Side Panel Controller (v2 "Atelier")
 // ============================================================================
 
 // ---------- Constants -------------------------------------------------------
@@ -10,7 +10,7 @@ const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
 const WRITER_URL        = 'https://www.thehoth.com/writer';
 
 // ============================================================================
-//  Icon library — Lucide SVGs resolved into [data-icon] placeholders
+//  Icon registry — Lucide SVGs resolved into [data-icon] placeholders
 // ============================================================================
 const ICONS = {
   eye:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
@@ -32,12 +32,14 @@ const ICONS = {
   stop:      '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>',
   refresh:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>',
   info:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+  cpu:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
+  crosshair: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>',
 };
 
 function renderIcons(root = document) {
   root.querySelectorAll('[data-icon]').forEach(el => {
     const name = el.getAttribute('data-icon');
-    if (ICONS[name]) el.innerHTML = ICONS[name];
+    if (ICONS[name] && !el.firstElementChild) el.innerHTML = ICONS[name];
   });
 }
 renderIcons();
@@ -54,19 +56,22 @@ const alarmDurationVal = $('alarmDurationVal');
 const checkIntervalEl  = $('checkInterval');
 const checkIntervalVal = $('checkIntervalVal');
 const intervalDesc     = $('intervalDesc');
+const watcherSub       = $('watcherSub');
+
 const spintaxEnabledEl = $('spintaxEnabled');
 const emailEnabledEl   = $('emailEnabled');
+const spintaxSub       = $('spintaxSub');
+
 const writerEnabledEl  = $('writerEnabled');
 const autoModeEl       = $('autoMode');
 const autoSubmitEl     = $('autoSubmit');
 const waitTimeEl       = $('waitTime');
 const waitTimeVal      = $('waitTimeVal');
+const writerSub        = $('writerSub');
 
-const watcherBadge   = $('watcherBadge');
-const spintaxBadge   = $('spintaxBadge');
-const writerBadge    = $('writerBadge');
-const masterPill     = $('masterPill');
-const masterPillText = $('masterPillText');
+const heroPill       = $('heroPill');
+const heroPillText   = $('heroPillText');
+const heroCount      = $('heroCount');
 
 const apiKeyText     = $('apiKeyText');
 const lockStatus     = $('lockStatus');
@@ -90,19 +95,20 @@ const openWriterBtn  = $('openWriterBtn');
 const stopAlarmBtn   = $('stopAlarmBtn');
 const writeNowBtn    = $('writeNowBtn');
 const testApiBtn     = $('testApiBtn');
+const reloadBtn      = $('reloadBtn');
 
-const toast       = $('toast');
-const alertAudio  = $('alertAudio');
+const toast          = $('toast');
+const alertAudio     = $('alertAudio');
 
 // ============================================================================
 //  Audio cue helper
 // ============================================================================
 let audioPlaying = false;
-function playAlert(duration = 1200) {
+function playAlert(duration = 1000) {
   if (audioPlaying) return;
   audioPlaying = true;
   alertAudio.currentTime = 0;
-  alertAudio.volume = 0.7;
+  alertAudio.volume = 0.6;
   alertAudio.play().catch(() => {});
   setTimeout(() => {
     alertAudio.pause();
@@ -115,30 +121,83 @@ function playAlert(duration = 1200) {
 //  Toast
 // ============================================================================
 let toastTimer = null;
-function showToast(message, tone = 'info', { icon, sound = false, duration = 2400 } = {}) {
+function showToast(message, tone = 'info', { icon, sound = false, duration = 2500 } = {}) {
   if (toastTimer) clearTimeout(toastTimer);
   const ico = icon || (tone === 'ok' ? 'check' : tone === 'err' ? 'x' : tone === 'warn' ? 'alert' : 'info');
   toast.innerHTML = `${ICONS[ico] || ''}<span>${message}</span>`;
   toast.dataset.tone = tone;
-  toast.classList.add('is-visible');
+  requestAnimationFrame(() => toast.classList.add('is-visible'));
   if (sound) playAlert();
   toastTimer = setTimeout(() => toast.classList.remove('is-visible'), duration);
 }
 
 // ============================================================================
-//  Section collapse/expand
+//  Module open / close + hero chip jump
 // ============================================================================
-document.querySelectorAll('.section-head').forEach(head => {
-  const target = head.dataset.target;
-  const section = head.closest('.section');
-  const toggle = () => {
-    const isOpen = section.dataset.open === 'true';
-    section.dataset.open = String(!isOpen);
-    head.setAttribute('aria-expanded', String(!isOpen));
+document.querySelectorAll('[data-toggle]').forEach(head => {
+  const article = head.closest('.module');
+  const toggle = (e) => {
+    if (e.target.closest('[data-stop]')) return; // don't toggle when clicking switch
+    const open = article.dataset.open !== 'true';
+    article.dataset.open = String(open);
+    head.setAttribute('aria-expanded', String(open));
   };
   head.addEventListener('click', toggle);
   head.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+  });
+});
+
+document.querySelectorAll('.hero-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const targetId = chip.dataset.target;
+    const article = $(targetId);
+    if (!article) return;
+    article.dataset.open = 'true';
+    article.querySelector('.module-head').setAttribute('aria-expanded', 'true');
+    article.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    article.animate(
+      [
+        { boxShadow: '0 0 0 0 rgba(139,92,246,0.0)' },
+        { boxShadow: '0 0 0 4px rgba(139,92,246,0.35)' },
+        { boxShadow: '0 0 0 0 rgba(139,92,246,0.0)' },
+      ],
+      { duration: 900, easing: 'ease-out' }
+    );
+  });
+});
+
+// ============================================================================
+//  Range "fill" CSS variable + value text + presets + sub-summaries
+// ============================================================================
+function setRangeFill(el) {
+  const min = parseFloat(el.min) || 0;
+  const max = parseFloat(el.max) || 100;
+  const val = parseFloat(el.value);
+  const pct = ((val - min) / (max - min)) * 100;
+  el.style.setProperty('--fill', `${pct}%`);
+}
+
+function syncPresetGroup(group, val) {
+  document.querySelectorAll(`.presets[data-group="${group}"] .preset`).forEach(btn => {
+    btn.classList.toggle('is-active', parseFloat(btn.dataset.val) === parseFloat(val));
+  });
+}
+
+document.querySelectorAll('.range').forEach(el => {
+  setRangeFill(el);
+  el.addEventListener('input', () => setRangeFill(el));
+});
+
+document.querySelectorAll('.preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const group = btn.closest('.presets').dataset.group;
+    const val = parseFloat(btn.dataset.val);
+    if (group === 'alarm')      { alarmDurationEl.value = val; alarmDurationEl.dispatchEvent(new Event('input')); }
+    else if (group === 'interval') { checkIntervalEl.value = val; checkIntervalEl.dispatchEvent(new Event('input')); }
+    else if (group === 'wait')  { waitTimeEl.value = val; waitTimeEl.dispatchEvent(new Event('input')); }
+    else if (group === 'ridgeDelay') { ridgeDelayEl.value = val; ridgeDelayEl.dispatchEvent(new Event('input')); }
+    markDirty();
   });
 });
 
@@ -146,6 +205,7 @@ document.querySelectorAll('.section-head').forEach(head => {
 //  Load HOTH settings
 // ============================================================================
 let currentApiKey = DEFAULT_GROQ_KEY;
+let isDirty = false;
 
 function maskGroqKey(key) {
   if (!key || key.length < 12) return 'gsk_••••••••••••••••••••••••••••••••';
@@ -156,121 +216,155 @@ function maskRidgeKey(key) {
   return key.slice(0, 4) + '••••••••••••••••••••' + key.slice(-4);
 }
 
-chrome.storage.sync.get({
-  watcherEnabled: true,
-  autoClick:      true,
-  alarmDuration:  10,
-  checkInterval:  10,
-  spintaxEnabled: true,
-  emailEnabled:   true,
-  writerEnabled:  true,
-  autoMode:       false,
-  autoSubmit:     false,
-  waitTime:       5,
-  groqApiKey:     DEFAULT_GROQ_KEY,
-  groqModel:      GROQ_MODEL,
-}, (data) => {
-  watcherEnabledEl.checked = data.watcherEnabled;
-  autoClickEl.checked      = data.autoClick;
-  alarmDurationEl.value    = data.alarmDuration;
-  alarmDurationVal.textContent = `${data.alarmDuration}s`;
-  checkIntervalEl.value    = data.checkInterval;
-  checkIntervalVal.textContent = `${data.checkInterval}s`;
-  intervalDesc.textContent = `Scan for the Edit button every ${data.checkInterval} second${data.checkInterval === 1 ? '' : 's'}`;
-  spintaxEnabledEl.checked = data.spintaxEnabled;
-  emailEnabledEl.checked   = data.emailEnabled;
-  writerEnabledEl.checked  = data.writerEnabled;
-  autoModeEl.checked       = data.autoMode;
-  autoSubmitEl.checked     = data.autoSubmit;
-  waitTimeEl.value         = data.waitTime;
-  waitTimeVal.textContent  = `${data.waitTime}s`;
+function loadSettings() {
+  chrome.storage.sync.get({
+    watcherEnabled: true,
+    autoClick:      true,
+    alarmDuration:  10,
+    checkInterval:  10,
+    spintaxEnabled: true,
+    emailEnabled:   true,
+    writerEnabled:  true,
+    autoMode:       false,
+    autoSubmit:     false,
+    waitTime:       5,
+    groqApiKey:     DEFAULT_GROQ_KEY,
+    groqModel:      GROQ_MODEL,
+  }, (data) => {
+    watcherEnabledEl.checked = data.watcherEnabled;
+    autoClickEl.checked      = data.autoClick;
+    alarmDurationEl.value    = data.alarmDuration;
+    alarmDurationVal.textContent = `${data.alarmDuration}s`;
+    setRangeFill(alarmDurationEl);
+    checkIntervalEl.value    = data.checkInterval;
+    checkIntervalVal.textContent = `${data.checkInterval}s`;
+    setRangeFill(checkIntervalEl);
+    intervalDesc.textContent = `Scan for the Edit button every ${data.checkInterval} second${data.checkInterval === 1 ? '' : 's'}.`;
 
-  currentApiKey = data.groqApiKey || DEFAULT_GROQ_KEY;
-  apiKeyText.textContent = maskGroqKey(currentApiKey);
+    spintaxEnabledEl.checked = data.spintaxEnabled;
+    emailEnabledEl.checked   = data.emailEnabled;
 
-  updateBadges(data);
-  syncPresets();
-});
+    writerEnabledEl.checked  = data.writerEnabled;
+    autoModeEl.checked       = data.autoMode;
+    autoSubmitEl.checked     = data.autoSubmit;
+    waitTimeEl.value         = data.waitTime;
+    waitTimeVal.textContent  = `${data.waitTime}s`;
+    setRangeFill(waitTimeEl);
 
-// ============================================================================
-//  Badge / master status
-// ============================================================================
-function updateBadge(el, on) {
-  el.textContent = on ? 'On' : 'Off';
-  el.dataset.state = on ? 'on' : 'off';
+    currentApiKey = data.groqApiKey || DEFAULT_GROQ_KEY;
+    apiKeyText.textContent = maskGroqKey(currentApiKey);
+
+    updateBadges(data);
+    syncSubs();
+    syncAllPresets();
+    clearDirty();
+  });
 }
+loadSettings();
+
+function syncAllPresets() {
+  syncPresetGroup('alarm',    alarmDurationEl.value);
+  syncPresetGroup('interval', checkIntervalEl.value);
+  syncPresetGroup('wait',     waitTimeEl.value);
+  syncPresetGroup('ridgeDelay', ridgeDelayEl.value);
+}
+
+// ============================================================================
+//  Hero + module state synchronisation
+// ============================================================================
+function updateChip(chipId, active, stateLabel) {
+  const chip = document.querySelector(`.hero-chip[data-chip="${chipId}"]`);
+  if (!chip) return;
+  chip.dataset.active = String(active);
+  const stateEl = chip.querySelector('.hero-chip-state');
+  if (stateEl) stateEl.textContent = stateLabel;
+}
+
+function updateModuleActive(moduleId, active) {
+  const m = $(moduleId);
+  if (m) m.dataset.active = String(active);
+}
+
 function updateBadges(data) {
-  updateBadge(watcherBadge, data.watcherEnabled);
-  updateBadge(spintaxBadge, data.spintaxEnabled);
-  updateBadge(writerBadge,  data.writerEnabled);
-  const anyOn = data.watcherEnabled || data.spintaxEnabled || data.writerEnabled;
-  masterPill.dataset.state = anyOn ? 'active' : 'paused';
-  masterPillText.textContent = anyOn ? 'Active' : 'Paused';
+  // Hero modules
+  updateChip('watcher', data.watcherEnabled, data.watcherEnabled ? 'Watching' : 'Off');
+  updateChip('spintax', data.spintaxEnabled, data.spintaxEnabled ? 'Scanning' : 'Off');
+  updateChip('writer',  data.writerEnabled,  data.writerEnabled ? (data.autoMode ? 'Auto' : 'Ready') : 'Off');
+
+  updateModuleActive('modWatcher', data.watcherEnabled);
+  updateModuleActive('modSpintax', data.spintaxEnabled);
+  updateModuleActive('modWriter',  data.writerEnabled);
+
+  // Master pill
+  const flags = [data.watcherEnabled, data.spintaxEnabled, data.writerEnabled];
+  const on = flags.filter(Boolean).length;
+  if (on === 0) {
+    heroPill.dataset.state = 'paused';
+    heroPillText.textContent = 'All paused';
+  } else if (on === 3) {
+    heroPill.dataset.state = 'active';
+    heroPillText.textContent = 'Running';
+  } else {
+    heroPill.dataset.state = 'active';
+    heroPillText.textContent = 'Partial';
+  }
+  heroCount.textContent = String(on);
 }
-[watcherEnabledEl, spintaxEnabledEl, writerEnabledEl].forEach(el => {
-  el.addEventListener('change', () => {
+
+function syncSubs() {
+  watcherSub.textContent = `Every ${checkIntervalEl.value}s · ${alarmDurationEl.value}s alarm`;
+  spintaxSub.textContent = emailEnabledEl.checked ? 'Email alerts on detection' : 'Detection only';
+  writerSub.textContent  = `${autoModeEl.checked ? 'Auto' : 'Manual'}${autoSubmitEl.checked ? ' submit' : ''} · ${waitTimeEl.value}s wait`;
+}
+
+// Real-time updates as the user interacts
+[watcherEnabledEl, spintaxEnabledEl, writerEnabledEl, autoClickEl, autoModeEl, autoSubmitEl, emailEnabledEl]
+  .forEach(el => el.addEventListener('change', () => {
+    markDirty();
     updateBadges({
       watcherEnabled: watcherEnabledEl.checked,
       spintaxEnabled: spintaxEnabledEl.checked,
       writerEnabled:  writerEnabledEl.checked,
+      autoMode:       autoModeEl.checked,
     });
-  });
-});
+    syncSubs();
+  }));
 
-// ============================================================================
-//  Sliders & presets
-// ============================================================================
 alarmDurationEl.addEventListener('input', () => {
-  const v = parseInt(alarmDurationEl.value);
-  alarmDurationVal.textContent = `${v}s`;
-  syncPresetGroup('alarm', v);
+  alarmDurationVal.textContent = `${alarmDurationEl.value}s`;
+  syncPresetGroup('alarm', alarmDurationEl.value);
+  syncSubs();
+  markDirty();
 });
 checkIntervalEl.addEventListener('input', () => {
-  const v = parseInt(checkIntervalEl.value);
-  checkIntervalVal.textContent = `${v}s`;
-  intervalDesc.textContent = `Scan for the Edit button every ${v} second${v === 1 ? '' : 's'}`;
-  syncPresetGroup('interval', v);
+  checkIntervalVal.textContent = `${checkIntervalEl.value}s`;
+  intervalDesc.textContent = `Scan for the Edit button every ${checkIntervalEl.value} second${checkIntervalEl.value === '1' ? '' : 's'}.`;
+  syncPresetGroup('interval', checkIntervalEl.value);
+  syncSubs();
+  markDirty();
 });
 waitTimeEl.addEventListener('input', () => {
-  const v = parseInt(waitTimeEl.value);
-  waitTimeVal.textContent = `${v}s`;
-  syncPresetGroup('wait', v);
-});
-
-function syncPresetGroup(group, val) {
-  document.querySelectorAll(`.presets[data-group="${group}"] .preset`).forEach(btn => {
-    btn.classList.toggle('is-active', parseFloat(btn.dataset.val) === parseFloat(val));
-  });
-}
-function syncPresets() {
-  syncPresetGroup('alarm',    parseInt(alarmDurationEl.value));
-  syncPresetGroup('interval', parseInt(checkIntervalEl.value));
-  syncPresetGroup('wait',     parseInt(waitTimeEl.value));
-}
-document.querySelectorAll('.preset').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const group = btn.closest('.presets').dataset.group;
-    const val   = parseFloat(btn.dataset.val);
-    if (group === 'alarm') {
-      alarmDurationEl.value = val;
-      alarmDurationVal.textContent = `${val}s`;
-    } else if (group === 'interval') {
-      checkIntervalEl.value = val;
-      checkIntervalVal.textContent = `${val}s`;
-      intervalDesc.textContent = `Scan for the Edit button every ${val} second${val === 1 ? '' : 's'}`;
-    } else if (group === 'wait') {
-      waitTimeEl.value = val;
-      waitTimeVal.textContent = `${val}s`;
-    } else if (group === 'ridgeDelay') {
-      ridgeDelayEl.value = val;
-      ridgeDelayVal.textContent = `${val}s`;
-    }
-    syncPresetGroup(group, val);
-  });
+  waitTimeVal.textContent = `${waitTimeEl.value}s`;
+  syncPresetGroup('wait', waitTimeEl.value);
+  syncSubs();
+  markDirty();
 });
 
 // ============================================================================
-//  API key PIN protection (Groq)
+//  Dirty-state save button
+// ============================================================================
+function markDirty() {
+  if (isDirty) return;
+  isDirty = true;
+  saveBtn.classList.add('is-dirty');
+}
+function clearDirty() {
+  isDirty = false;
+  saveBtn.classList.remove('is-dirty');
+}
+
+// ============================================================================
+//  Groq API key PIN flow
 // ============================================================================
 let pinAttempts = 0;
 
@@ -281,7 +375,7 @@ changeKeyBtn.addEventListener('click', () => {
   pinInput.value = '';
   pinInput.focus();
 });
-pinCancelBtn.addEventListener('click', () => closePin());
+pinCancelBtn.addEventListener('click', closePin);
 function closePin() {
   pinArea.classList.remove('is-open');
   changeKeyBtn.classList.remove('hidden');
@@ -308,12 +402,12 @@ function confirmPin() {
     showToast('Unlocked — edit your API key', 'ok', { icon: 'unlock' });
   } else {
     pinAttempts++;
-    playAlert(700);
+    playAlert(600);
     if (pinAttempts >= 3) {
       showToast('Too many failed attempts', 'err');
       closePin();
     } else {
-      showToast(`Wrong PIN (${pinAttempts}/3 attempts)`, 'err');
+      showToast(`Wrong PIN · ${pinAttempts}/3`, 'err');
       pinInput.value = '';
       pinInput.focus();
     }
@@ -326,11 +420,10 @@ keyCancelBtn.addEventListener('click', () => {
   lockStatus.classList.remove('hidden');
   keyInput.value = '';
 });
-
 keySaveBtn.addEventListener('click', () => {
   const newKey = keyInput.value.trim();
   if (!newKey.startsWith('gsk_')) {
-    playAlert(600);
+    playAlert(500);
     showToast('Key must start with gsk_', 'err');
     return;
   }
@@ -340,6 +433,7 @@ keySaveBtn.addEventListener('click', () => {
   changeKeyBtn.classList.remove('hidden');
   lockStatus.classList.remove('hidden');
   keyInput.value = '';
+  markDirty();
   showToast('API key updated', 'ok');
 });
 
@@ -364,8 +458,14 @@ saveBtn.addEventListener('click', () => {
   chrome.storage.sync.set(settings, () => {
     updateBadges(settings);
     chrome.runtime.sendMessage({ type: 'BROADCAST_SETTINGS', settings });
+    clearDirty();
     showToast('Settings saved', 'ok');
   });
+});
+
+reloadBtn.addEventListener('click', () => {
+  loadSettings();
+  showToast('Settings reloaded', 'info');
 });
 
 // ============================================================================
@@ -386,7 +486,7 @@ stopAlarmBtn.addEventListener('click', () => {
 
 checkNowBtn.addEventListener('click', () => {
   chrome.tabs.query({ url: `${WRITER_URL}*` }, (tabs) => {
-    if (!tabs.length) { playAlert(500); showToast('Writer page not open', 'warn'); return; }
+    if (!tabs.length) { playAlert(400); showToast('Writer page not open', 'warn'); return; }
     chrome.tabs.sendMessage(tabs[0].id, { type: 'MANUAL_CHECK' }, () => {
       showToast('Checking now…', 'info');
     });
@@ -405,10 +505,10 @@ writeNowBtn.addEventListener('click', () => {
     if (!tabs[0]) return;
     chrome.tabs.sendMessage(tabs[0].id, { type: 'MANUAL_WRITE' }, (resp) => {
       if (chrome.runtime.lastError || !resp) {
-        playAlert(500);
+        playAlert(400);
         showToast('No job page detected on this tab', 'warn');
       } else {
-        showToast('Article composer started', 'ok');
+        showToast('Composer started', 'ok');
       }
     });
   });
@@ -419,42 +519,41 @@ writeNowBtn.addEventListener('click', () => {
 // ============================================================================
 testApiBtn.addEventListener('click', async () => {
   testApiBtn.disabled = true;
-  const original = testApiBtn.innerHTML;
-  testApiBtn.innerHTML = `${ICONS.refresh.replace('<svg', '<svg class="spin"')}<span>Testing…</span>`;
+  const orig = testApiBtn.innerHTML;
+  testApiBtn.innerHTML = `<span class="spin" style="display:inline-flex">${ICONS.refresh}</span><span>Testing…</span>`;
   apiStatusText.textContent = 'Testing connection…';
   apiDot.dataset.tone = 'warn';
 
+  const start = performance.now();
   try {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${currentApiKey}`,
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentApiKey}` },
       body: JSON.stringify({
         model:      GROQ_MODEL,
         max_tokens: 10,
         messages:   [{ role: 'user', content: 'Reply: CONNECTED' }],
       }),
     });
+    const ms = Math.round(performance.now() - start);
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
     apiDot.dataset.tone = 'ok';
-    apiStatusText.textContent = `API connected · ${GROQ_MODEL}`;
-    showToast('API working — model ready', 'ok');
+    apiStatusText.textContent = `Connected · ${GROQ_MODEL} · ${ms}ms`;
+    showToast('API connected', 'ok');
   } catch (err) {
-    playAlert(700);
+    playAlert(600);
     apiDot.dataset.tone = 'err';
     apiStatusText.textContent = err.message.slice(0, 60);
     showToast(err.message.slice(0, 40), 'err');
   } finally {
     testApiBtn.disabled = false;
-    testApiBtn.innerHTML = original;
+    testApiBtn.innerHTML = orig;
   }
 });
 
 // ============================================================================
-//  RIDGE NEURAL SOLVER (popup-side controller)
+//  RIDGE NEURAL SOLVER
 // ============================================================================
 let ridgeCurrentKey      = RIDGE_DEFAULT_KEY;
 let ridgeAutosolveActive = false;
@@ -496,6 +595,7 @@ chrome.storage.local.get({
   ridgeSubmitSel.value  = data.submitSelector;
   ridgeDelayEl.value    = data.delay;
   ridgeDelayVal.textContent = `${data.delay}s`;
+  setRangeFill(ridgeDelayEl);
   syncPresetGroup('ridgeDelay', parseFloat(data.delay));
   ridgeAutosolveActive = !!data.autosolveEnabled;
   updateRidgeUI();
@@ -516,9 +616,8 @@ function updateRidgeUI() {
 }
 
 ridgeDelayEl.addEventListener('input', () => {
-  const v = parseFloat(ridgeDelayEl.value);
-  ridgeDelayVal.textContent = `${v}s`;
-  syncPresetGroup('ridgeDelay', v);
+  ridgeDelayVal.textContent = `${ridgeDelayEl.value}s`;
+  syncPresetGroup('ridgeDelay', ridgeDelayEl.value);
 });
 
 ridgeChangeKeyBtn.addEventListener('click', () => {
@@ -554,12 +653,12 @@ function confirmRidgePin() {
     showToast('Unlocked — edit Ridge key', 'ok', { icon: 'unlock' });
   } else {
     ridgePinAttempts++;
-    playAlert(700);
+    playAlert(600);
     if (ridgePinAttempts >= 3) {
       showToast('Too many failed attempts', 'err');
       closeRidgePin();
     } else {
-      showToast(`Wrong PIN (${ridgePinAttempts}/3 attempts)`, 'err');
+      showToast(`Wrong PIN · ${ridgePinAttempts}/3`, 'err');
       ridgePinInput.value = '';
       ridgePinInput.focus();
     }
@@ -576,7 +675,7 @@ ridgeKeyCancelBtn.addEventListener('click', () => {
 ridgeKeySaveBtn.addEventListener('click', () => {
   const newKey = ridgeKeyInput.value.trim();
   if (!newKey) {
-    playAlert(500);
+    playAlert(400);
     showToast('API key cannot be empty', 'err');
     return;
   }
