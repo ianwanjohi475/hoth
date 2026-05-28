@@ -3,7 +3,8 @@
 // ============================================================================
 
 // ---------- Constants -------------------------------------------------------
-const PROTECTED_PIN     = '4759';
+const PROTECTED_PIN     = '4759';   // Groq API key unlock
+const RIDGE_PIN         = '0000';   // Ridge / Mistral API key unlock
 const DEFAULT_GROQ_KEY  = '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';
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
 const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
@@ -672,7 +673,7 @@ ridgePinInput.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeRidgePin();
 });
 function confirmRidgePin() {
-  if (ridgePinInput.value === PROTECTED_PIN) {
+  if (ridgePinInput.value === RIDGE_PIN) {
     ridgePinAttempts = 0;
     ridgePinArea.classList.remove('is-open');
     ridgeKeyEditArea.classList.add('is-open');
