@@ -323,7 +323,43 @@
       <div class="module-body-inner">
 
         <div class="api-card">
-          <div class="field-label"><span data-icon="key"></span>Mistral API key</div>
+          <div class="field-label"><span data-icon="key"></span>Gemini API key (recommended · most accurate)</div>
+          <div class="api-key-show" id="geminiKeyDisplay">
+            <span data-icon="lock"></span>
+            <span id="geminiKeyText">Not set — get a free key at aistudio.google.com</span>
+          </div>
+          <div class="api-locked" id="geminiLockStatus">
+            <span data-icon="lock"></span>
+            <span>Protected — enter PIN to change</span>
+          </div>
+
+          <div class="pin-area" id="geminiPinArea">
+            <input class="input" type="password" id="geminiPinInput" placeholder="Enter 4-digit PIN" maxlength="4" inputmode="numeric" autocomplete="off" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="geminiPinCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="geminiPinConfirmBtn">
+                <span data-icon="unlock"></span><span>Unlock</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="key-edit-area" id="geminiKeyEditArea">
+            <input class="input" type="text" id="geminiKeyInput" placeholder="Gemini API key…" autocomplete="off" spellcheck="false" />
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" id="geminiKeyCancelBtn">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="geminiKeySaveBtn">
+                <span data-icon="check"></span><span>Save key</span>
+              </button>
+            </div>
+          </div>
+
+          <button class="btn btn-ghost btn-sm btn-block" id="geminiChangeKeyBtn">
+            <span data-icon="lock"></span><span>Add / change Gemini key</span>
+          </button>
+        </div>
+
+        <div class="api-card">
+          <div class="field-label"><span data-icon="key"></span>Mistral API key (fallback)</div>
           <div class="api-key-show" id="ridgeKeyDisplay">
             <span data-icon="lock"></span>
             <span id="ridgeKeyText">••••••••••••••••••••••••••••••••</span>

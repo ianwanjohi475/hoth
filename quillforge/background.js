@@ -286,6 +286,116 @@ function withTimeout(promise, ms, label = 'OCR call') {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ============================================================================
+//  Vision OCR backends — Gemini ▸ Groq ▸ Mistral, cascading.
+//
+//  Gemini 2.0 Flash is the most accurate free vision model available right
+//  now (15 RPM / 1500 RPD free tier). Groq's Llama 4 Scout is substantially
+//  more accurate than Mistral Pixtral 12B and the user already has a Groq
+//  key. Mistral is kept as the legacy fallback. The pure-JS local solver
+//  runs alongside for a final independent vote.
+// ============================================================================
+
+const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+const GEMINI_VISION_MODEL = 'gemini-2.0-flash';
+
+// Stripped raw base64 (no "data:image/...;base64," prefix) — Gemini's
+// inline_data expects this form.
+function stripDataPrefix(b64) {
+  return typeof b64 === 'string' ? b64.replace(/^data:[^;]+;base64,/i, '') : b64;
+}
+
+async function callGeminiOCR(imageBase64, prompt, temperature, apiKey, attempts = 3) {
+  const data = stripDataPrefix(imageBase64);
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const generationConfig = { temperature, maxOutputTokens: 100 };
+      if (temperature > 0) generationConfig.topP = 0.1;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: 'image/png', data } },
+            ],
+          }],
+          generationConfig,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.message || `Gemini ${res.status}`;
+        if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
+          await sleep(3000 + Math.random() * 2000 + i * 1500);
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+      const json = await res.json();
+      return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
+        await sleep(3000 + Math.random() * 2000);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error('Gemini call failed');
+}
+
+async function callGroqVisionOCR(imageBase64, prompt, temperature, apiKey, attempts = 3) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const body = {
+        model: GROQ_VISION_MODEL,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+        max_tokens:  120,
+        temperature,
+      };
+      if (temperature > 0) body.top_p = 0.1;
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.message || `Groq ${res.status}`;
+        if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
+          await sleep(3000 + Math.random() * 2000 + i * 1500);
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      return data?.choices?.[0]?.message?.content?.trim() || '';
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
+        await sleep(3000 + Math.random() * 2000);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error('Groq call failed');
+}
+
 async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts = 3) {
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
@@ -420,8 +530,47 @@ function voteCharacters(samples, expectedLen) {
   return result;
 }
 
+// Cascading vision OCR: try the best provider configured, fall back on
+// any error (including 4xx auth errors, model-not-available, rate limits
+// exhausted after retries). Returns the raw model text from whichever
+// provider succeeded, plus which one it was for the diagnostic log.
+async function cascadeOCR(imageBase64, prompt, temperature, keys, attempts = 3) {
+  const cascade = [];
+  if (keys.gemini)  cascade.push({ name: 'gemini',  fn: callGeminiOCR,      key: keys.gemini });
+  if (keys.groq)    cascade.push({ name: 'groq',    fn: callGroqVisionOCR,  key: keys.groq });
+  if (keys.mistral) cascade.push({ name: 'mistral', fn: callMistralOCR,     key: keys.mistral });
+  if (!cascade.length) throw new Error('No OCR provider configured');
+
+  let lastErr = null;
+  for (const provider of cascade) {
+    try {
+      const raw = await provider.fn(imageBase64, prompt, temperature, provider.key, attempts);
+      return { provider: provider.name, raw };
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[Quillforge OCR] ${provider.name} failed: ${e.message} — falling back`);
+    }
+  }
+  throw lastErr || new Error('All OCR providers failed');
+}
+
 async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, apiKey, expectedLength = 5, passes = 5 }) {
   const mistralKey = apiKey || RIDGE_DEFAULT_KEY;
+  // Pull the user's Groq + Gemini keys (if any). Groq has a default key
+  // baked in, so it's effectively always available. Gemini is empty by
+  // default — the user adds one via the side panel.
+  const { groqApiKey, geminiApiKey } = await new Promise(r =>
+    chrome.storage.sync.get(['groqApiKey', 'geminiApiKey'], d => r({
+      groqApiKey:   d.groqApiKey   || DEFAULT_GROQ_KEY,
+      geminiApiKey: d.geminiApiKey || '',
+    }))
+  );
+  const keys = {
+    gemini:  geminiApiKey || null,
+    groq:    groqApiKey   || null,
+    mistral: mistralKey,
+  };
+
   const variants   = Array.isArray(imageVariants)  ? imageVariants.filter(Boolean)  : [];
   const segments   = Array.isArray(segmentedChars) ? segmentedChars.filter(Boolean) : [];
   // cvHint is the answer from the pure-JS local OCR solver. Treated as one
@@ -464,22 +613,21 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
   }));
 
   // ── Run everything in parallel with stagger ──
-  // Mistral free tier is ~1 req/s. 1100ms between calls (just over 1s)
-  // keeps us comfortably under the limit instead of bursting and getting
-  // every call rejected with 429.
+  // Stagger keeps us under per-provider rate limits. 1200 ms is just over
+  // Mistral's 1 req/s ceiling; Groq and Gemini have headroom for more.
   const allTasks = [...fullTasks, ...charTasks];
   const settled = await Promise.allSettled(
     allTasks.map((t, idx) => {
       const fn = async () => {
-        if (idx > 0) await sleep(idx * 1100);
-        const raw = await callMistralOCR(t.image, t.prompt, t.temperature, mistralKey);
+        if (idx > 0) await sleep(idx * 1200);
+        const { provider, raw } = await cascadeOCR(t.image, t.prompt, t.temperature, keys);
         if (t.kind === 'full') {
-          return { ...t, raw, text: extractAnswer(raw, expectedLength) };
+          return { ...t, provider, raw, text: extractAnswer(raw, expectedLength) };
         } else {
-          return { ...t, raw, text: extractSingleChar(raw) };
+          return { ...t, provider, raw, text: extractSingleChar(raw) };
         }
       };
-      return withTimeout(fn(), 15000, `${t.kind} pass ${idx + 1}`);
+      return withTimeout(fn(), 20000, `${t.kind} pass ${idx + 1}`);
     })
   );
 
@@ -545,8 +693,8 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
   // ── Diagnostic log ──
   try {
     console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length}·cv ${cvSamples.length} · "${voted}" · conf ${(overallConfidence * 100).toFixed(0)}%`);
-    fullSamples.forEach((s, i) => console.log(`  full ${i + 1}: "${s.text}"`));
-    charSamples.forEach((s)    => console.log(`  char [${s.position}]: "${s.text}"`));
+    fullSamples.forEach((s, i) => console.log(`  full ${i + 1} (${s.provider || '?'}): "${s.text}"`));
+    charSamples.forEach((s)    => console.log(`  char [${s.position}] (${s.provider || '?'}): "${s.text}"`));
     cvSamples.forEach((s)      => console.log(`  cv  hint: "${s.text}"  (pure-JS local solver)`));
     breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} cv=${JSON.stringify(b.cv || [])} → "${b.picked}" (${(b.conf * 100).toFixed(0)}%)`));
     if (rejected.length) console.log('  rejected:', rejected);

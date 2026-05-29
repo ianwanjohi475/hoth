@@ -562,6 +562,8 @@ testApiBtn.addEventListener('click', async () => {
 let ridgeCurrentKey      = RIDGE_DEFAULT_KEY;
 let ridgeAutosolveActive = false;
 let ridgePinAttempts     = 0;
+let geminiCurrentKey     = '';
+let geminiPinAttempts    = 0;
 
 const ridgeKeyText        = $('ridgeKeyText');
 const ridgeLockStatus     = $('ridgeLockStatus');
@@ -589,6 +591,93 @@ const ridgeStartBtn       = $('ridgeStartBtn');
 const ridgeSaveBtn        = $('ridgeSaveBtn');
 const ridgeDot            = $('ridgeDot');
 const ridgeStatusText     = $('ridgeStatusText');
+
+const geminiKeyText        = $('geminiKeyText');
+const geminiLockStatus     = $('geminiLockStatus');
+const geminiPinArea        = $('geminiPinArea');
+const geminiKeyEditArea    = $('geminiKeyEditArea');
+const geminiPinInput       = $('geminiPinInput');
+const geminiKeyInput       = $('geminiKeyInput');
+const geminiChangeKeyBtn   = $('geminiChangeKeyBtn');
+const geminiPinCancelBtn   = $('geminiPinCancelBtn');
+const geminiPinConfirmBtn  = $('geminiPinConfirmBtn');
+const geminiKeyCancelBtn   = $('geminiKeyCancelBtn');
+const geminiKeySaveBtn     = $('geminiKeySaveBtn');
+
+function maskGeminiKey(key) {
+  if (!key) return 'Not set — get a free key at aistudio.google.com';
+  if (key.length < 12) return key;
+  return key.slice(0, 6) + '••••••••••••••••••••' + key.slice(-4);
+}
+
+// Load Gemini key from sync storage (same place as Groq key)
+chrome.storage.sync.get(['geminiApiKey'], (data) => {
+  geminiCurrentKey = data.geminiApiKey || '';
+  geminiKeyText.textContent = maskGeminiKey(geminiCurrentKey);
+});
+
+geminiChangeKeyBtn.addEventListener('click', () => {
+  geminiChangeKeyBtn.classList.add('hidden');
+  geminiLockStatus.classList.add('hidden');
+  geminiPinArea.classList.add('is-open');
+  geminiPinInput.value = '';
+  geminiPinInput.focus();
+});
+geminiPinCancelBtn.addEventListener('click', closeGeminiPin);
+function closeGeminiPin() {
+  geminiPinArea.classList.remove('is-open');
+  geminiChangeKeyBtn.classList.remove('hidden');
+  geminiLockStatus.classList.remove('hidden');
+  geminiPinInput.value = '';
+  geminiPinAttempts = 0;
+}
+geminiPinConfirmBtn.addEventListener('click', confirmGeminiPin);
+geminiPinInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter')  confirmGeminiPin();
+  if (e.key === 'Escape') closeGeminiPin();
+});
+function confirmGeminiPin() {
+  if (geminiPinInput.value === RIDGE_PIN) {
+    geminiPinAttempts = 0;
+    geminiPinArea.classList.remove('is-open');
+    geminiKeyEditArea.classList.add('is-open');
+    geminiKeyInput.value = geminiCurrentKey;
+    geminiKeyInput.focus();
+    geminiKeyInput.select();
+    geminiLockStatus.classList.add('hidden');
+    geminiChangeKeyBtn.classList.add('hidden');
+    showToast('Unlocked — paste your Gemini key', 'ok', { icon: 'unlock' });
+  } else {
+    geminiPinAttempts++;
+    playAlert(700);
+    if (geminiPinAttempts >= 3) {
+      showToast('Too many failed attempts', 'err');
+      closeGeminiPin();
+    } else {
+      showToast(`Wrong PIN · ${geminiPinAttempts}/3`, 'err');
+      geminiPinInput.value = '';
+      geminiPinInput.focus();
+    }
+  }
+}
+geminiKeyCancelBtn.addEventListener('click', () => {
+  geminiKeyEditArea.classList.remove('is-open');
+  geminiChangeKeyBtn.classList.remove('hidden');
+  geminiLockStatus.classList.remove('hidden');
+  geminiKeyInput.value = '';
+});
+geminiKeySaveBtn.addEventListener('click', () => {
+  const newKey = geminiKeyInput.value.trim();
+  geminiCurrentKey = newKey;
+  chrome.storage.sync.set({ geminiApiKey: newKey });
+  geminiKeyText.textContent = maskGeminiKey(geminiCurrentKey);
+  geminiKeyEditArea.classList.remove('is-open');
+  geminiChangeKeyBtn.classList.remove('hidden');
+  geminiLockStatus.classList.remove('hidden');
+  geminiKeyInput.value = '';
+  showToast(newKey ? 'Gemini key saved' : 'Gemini key cleared', 'ok');
+});
+
 
 chrome.storage.local.get({
   ridgeApiKey:      RIDGE_DEFAULT_KEY,
