@@ -488,6 +488,10 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
   // explicit non-votes.
   let voted = '';
   const breakdown = [];
+  // Confidence per position = (votes for winner) / (total valid votes).
+  // Overall confidence = MIN across positions (weakest link sets the
+  // chain). Drives the "refuse to submit unless certain" gate downstream.
+  const positionConfidences = [];
   for (let i = 0; i < expectedLength; i++) {
     const fromFull = fullSamples
       .map(s => (s.text.length === expectedLength ? s.text[i] : null))
@@ -505,20 +509,27 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
         .map(s => s.text[i])
         .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
       voted += loose.length ? mostFrequent(loose) : '?';
-      breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: voted[i], note: 'fallback' });
+      positionConfidences.push(0);
+      breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: voted[i], note: 'fallback', conf: 0 });
       continue;
     }
     const pick = mostFrequent(allVotes);
+    const winnerCount = allVotes.filter(c => c === pick).length;
+    const conf = winnerCount / allVotes.length;
     voted += pick;
-    breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: pick });
+    positionConfidences.push(conf);
+    breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: pick, conf });
   }
+  const overallConfidence = positionConfidences.length
+    ? Math.min(...positionConfidences)
+    : 0;
 
   // ── Diagnostic log ──
   try {
-    console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length} · voted "${voted}"`);
+    console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length} · "${voted}" · conf ${(overallConfidence * 100).toFixed(0)}%`);
     fullSamples.forEach((s, i) => console.log(`  full ${i + 1}: "${s.text}"`));
     charSamples.forEach((s)    => console.log(`  char [${s.position}]: "${s.text}"`));
-    breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} → "${b.picked}"`));
+    breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} → "${b.picked}" (${(b.conf * 100).toFixed(0)}%)`));
     if (rejected.length) console.log('  rejected:', rejected);
     console.groupEnd();
   } catch (_) {}
@@ -526,7 +537,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
   // Remove trailing '?' fallbacks (length-tolerant downstream check)
   voted = voted.replace(/\?+$/, '');
   if (!voted) throw new Error('Vote produced empty result');
-  return voted;
+  return { text: voted, confidence: overallConfidence };
 }
 
 function mostFrequent(arr) {
@@ -591,7 +602,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         expectedLength,
         passes,
       })
-        .then(text => sendResponse({ success: true, text }))
+        .then(({ text, confidence }) => sendResponse({ success: true, text, confidence }))
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true; // async
     }

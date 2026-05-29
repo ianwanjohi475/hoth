@@ -408,6 +408,22 @@
 
         <div class="slider-card">
           <div class="slider-row">
+            <span class="slider-label">Confidence gate</span>
+            <span class="slider-value" id="minConfidenceVal">65%</span>
+          </div>
+          <div class="slider-desc">Refuse to submit unless the vote agrees this strongly at every position. Higher = fewer wrong submits but more captcha refreshes. 0% = submit anything.</div>
+          <input type="range" class="range" id="minConfidence" min="0" max="100" step="5" value="65" />
+          <div class="presets" data-group="minConfidence">
+            <button class="preset" data-val="0">Off</button>
+            <button class="preset" data-val="50">Loose</button>
+            <button class="preset" data-val="65">Balanced</button>
+            <button class="preset" data-val="80">Strict</button>
+            <button class="preset" data-val="100">Only certain</button>
+          </div>
+        </div>
+
+        <div class="slider-card">
+          <div class="slider-row">
             <span class="slider-label">CAPTCHA length</span>
             <span class="slider-value" id="captchaLengthVal">5 chars</span>
           </div>

@@ -200,6 +200,7 @@ document.querySelectorAll('.preset').forEach(btn => {
     else if (group === 'ridgeDelay')    { ridgeDelayEl.value    = val; ridgeDelayEl.dispatchEvent(new Event('input')); setRangeFill(ridgeDelayEl); }
     else if (group === 'ocrPasses')     { ocrPassesEl.value     = val; ocrPassesEl.dispatchEvent(new Event('input')); setRangeFill(ocrPassesEl); }
     else if (group === 'captchaLength') { captchaLengthEl.value = val; captchaLengthEl.dispatchEvent(new Event('input')); setRangeFill(captchaLengthEl); }
+    else if (group === 'minConfidence') { minConfidenceEl.value = val; minConfidenceEl.dispatchEvent(new Event('input')); setRangeFill(minConfidenceEl); }
     markDirty();
   });
 });
@@ -582,6 +583,8 @@ const ocrPassesEl         = $('ocrPasses');
 const ocrPassesVal        = $('ocrPassesVal');
 const captchaLengthEl     = $('captchaLength');
 const captchaLengthVal    = $('captchaLengthVal');
+const minConfidenceEl     = $('minConfidence');
+const minConfidenceVal    = $('minConfidenceVal');
 const ridgeStartBtn       = $('ridgeStartBtn');
 const ridgeSaveBtn        = $('ridgeSaveBtn');
 const ridgeDot            = $('ridgeDot');
@@ -596,6 +599,7 @@ chrome.storage.local.get({
   autosolveEnabled: false,
   ocrPasses:        5,
   captchaLength:    5,
+  minConfidence:    0.65,
 }, (data) => {
   ridgeCurrentKey = data.ridgeApiKey || RIDGE_DEFAULT_KEY;
   ridgeKeyText.textContent = maskRidgeKey(ridgeCurrentKey);
@@ -616,6 +620,12 @@ chrome.storage.local.get({
   captchaLengthVal.textContent = `${data.captchaLength} chars`;
   setRangeFill(captchaLengthEl);
   syncPresetGroup('captchaLength', data.captchaLength);
+
+  const confPct = Math.round((data.minConfidence ?? 0.65) * 100);
+  minConfidenceEl.value = confPct;
+  minConfidenceVal.textContent = `${confPct}%`;
+  setRangeFill(minConfidenceEl);
+  syncPresetGroup('minConfidence', confPct);
 
   ridgeAutosolveActive = !!data.autosolveEnabled;
   updateRidgeUI();
@@ -650,6 +660,12 @@ captchaLengthEl.addEventListener('input', () => {
   const v = parseInt(captchaLengthEl.value);
   captchaLengthVal.textContent = `${v} chars`;
   syncPresetGroup('captchaLength', v);
+});
+
+minConfidenceEl.addEventListener('input', () => {
+  const v = parseInt(minConfidenceEl.value);
+  minConfidenceVal.textContent = `${v}%`;
+  syncPresetGroup('minConfidence', v);
 });
 
 ridgeChangeKeyBtn.addEventListener('click', () => {
@@ -730,6 +746,7 @@ function saveRidgeSettings() {
     delay:           parseFloat(ridgeDelayEl.value) || 0,
     ocrPasses:       parseInt(ocrPassesEl.value)    || 5,
     captchaLength:   parseInt(captchaLengthEl.value) || 5,
+    minConfidence:   (parseInt(minConfidenceEl.value) || 65) / 100,
   });
 }
 ridgeSaveBtn.addEventListener('click', () => {

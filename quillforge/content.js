@@ -985,7 +985,7 @@ window.__qfTokens = { QF, ICON };
     try {
       const settings = await getSettings();
       captchaSelForCatch = settings.captchaSelector;
-      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses } = settings;
+      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses, minConfidence } = settings;
 
       const imgEl = document.querySelector(captchaSelector);
       if (!imgEl || !imgEl.src || imgEl.naturalWidth === 0) {
@@ -1033,7 +1033,7 @@ window.__qfTokens = { QF, ICON };
 
       setStatus(`Solving · ${ocrPasses} full + ${segments.length} per-char passes…`, 'info');
 
-      const result = await new Promise((resolve, reject) => {
+      const { text: result, confidence } = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
             type:           'SOLVE_CAPTCHA',
@@ -1047,7 +1047,7 @@ window.__qfTokens = { QF, ICON };
             if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
             if (!response) return reject(new Error('No response from background'));
             if (!response.success) return reject(new Error(response.error));
-            resolve(response.text);
+            resolve({ text: response.text, confidence: response.confidence ?? 1 });
           }
         );
       });
@@ -1077,6 +1077,27 @@ window.__qfTokens = { QF, ICON };
       if (isSuspiciousAnswer(result)) {
         console.warn('[Quillforge Ridge] Suspicious answer rejected:', result);
         setStatus(`Rejected "${result}" · refreshing`, 'warn');
+        lastSubmitFingerprint = fp;
+        refreshCaptcha();
+        scheduleNext(2500);
+        return;
+      }
+
+      // ── Confidence gate ──
+      // The vision model has a hard ceiling on hard captchas. Instead of
+      // accepting whatever it produces, REFUSE to submit unless the vote
+      // shows strong cross-pass agreement at every position. HOTH lets us
+      // click "get a new code" indefinitely for free, so we trade quantity
+      // of attempts for quality of submissions — the answers that DO go
+      // through are answers we're highly confident in. minConfidence is
+      // tunable via storage (chrome.storage.local: minConfidence ∈ [0,1])
+      // and is the lever between "refresh anything sketchy" (high value)
+      // and "submit even if guessing" (low value).
+      if (confidence < minConfidence) {
+        const pct = (confidence * 100).toFixed(0);
+        const need = (minConfidence * 100).toFixed(0);
+        console.warn(`[Quillforge Ridge] Confidence ${pct}% < ${need}% threshold for "${result}" — refreshing`);
+        setStatus(`Low confidence ${pct}% · refreshing`, 'warn');
         lastSubmitFingerprint = fp;
         refreshCaptcha();
         scheduleNext(2500);
@@ -1178,7 +1199,7 @@ window.__qfTokens = { QF, ICON };
   function getSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get(
-        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay', 'captchaLength', 'ocrPasses'],
+        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay', 'captchaLength', 'ocrPasses', 'minConfidence'],
         (result) => resolve({
           ridgeApiKey:     result.ridgeApiKey     || RIDGE_DEFAULT_KEY,
           captchaSelector: result.captchaSelector || '#writercaptcha > div:nth-child(2) > img:nth-child(1)',
@@ -1187,6 +1208,7 @@ window.__qfTokens = { QF, ICON };
           delay:           result.delay !== undefined ? result.delay : 3,
           captchaLength:   Number.isFinite(result.captchaLength) ? result.captchaLength : 5,
           ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 5,
+          minConfidence:   Number.isFinite(result.minConfidence) ? result.minConfidence : 0.65,
         })
       );
     });
