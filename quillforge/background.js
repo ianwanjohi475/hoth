@@ -286,7 +286,7 @@ function withTimeout(promise, ms, label = 'OCR call') {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
+async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts = 3) {
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -316,9 +316,11 @@ async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const msg = err?.message || err?.error?.message || `Mistral ${res.status}`;
-        // Back off on rate limit / transient server errors
+        // Real backoff on rate-limit / server errors. Free tier is ~1 req/s
+        // so 3-5s with jitter is required, not the 400ms I had before.
         if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
-          await sleep(400 + Math.random() * 400);
+          const wait = 3000 + Math.random() * 2000 + i * 1500;
+          await sleep(wait);
           lastErr = new Error(msg);
           continue;
         }
@@ -329,7 +331,7 @@ async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts
     } catch (e) {
       lastErr = e;
       if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
-        await sleep(400);
+        await sleep(3000 + Math.random() * 2000);
         continue;
       }
       throw e;
@@ -462,12 +464,14 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
   }));
 
   // ── Run everything in parallel with stagger ──
-  // 80 ms apart so we don't burst the Mistral rate limiter.
+  // Mistral free tier is ~1 req/s. 1100ms between calls (just over 1s)
+  // keeps us comfortably under the limit instead of bursting and getting
+  // every call rejected with 429.
   const allTasks = [...fullTasks, ...charTasks];
   const settled = await Promise.allSettled(
     allTasks.map((t, idx) => {
       const fn = async () => {
-        if (idx > 0) await sleep(idx * 80);
+        if (idx > 0) await sleep(idx * 1100);
         const raw = await callMistralOCR(t.image, t.prompt, t.temperature, mistralKey);
         if (t.kind === 'full') {
           return { ...t, raw, text: extractAnswer(raw, expectedLength) };
@@ -475,7 +479,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
           return { ...t, raw, text: extractSingleChar(raw) };
         }
       };
-      return withTimeout(fn(), 12000, `${t.kind} pass ${idx + 1}`);
+      return withTimeout(fn(), 15000, `${t.kind} pass ${idx + 1}`);
     })
   );
 

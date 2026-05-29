@@ -393,26 +393,26 @@
 
         <div class="slider-card">
           <div class="slider-row">
-            <span class="slider-label">OCR accuracy</span>
-            <span class="slider-value" id="ocrPassesVal">5 passes</span>
+            <span class="slider-label">Mistral passes</span>
+            <span class="slider-value" id="ocrPassesVal">2 passes</span>
           </div>
-          <div class="slider-desc">Parallel Pixtral passes voted per character. Higher = more accurate, slightly slower &amp; more API calls.</div>
-          <input type="range" class="range" id="ocrPasses" min="1" max="9" step="1" value="5" />
+          <div class="slider-desc">Full-image API calls per captcha. Mistral free tier ≈ 1 req/s — keep this low to avoid rate limits. The pure-JS local solver runs alongside for free and gives one extra vote per character.</div>
+          <input type="range" class="range" id="ocrPasses" min="1" max="9" step="1" value="2" />
           <div class="presets" data-group="ocrPasses">
-            <button class="preset" data-val="3">Fast</button>
-            <button class="preset" data-val="5">Balanced</button>
-            <button class="preset" data-val="7">High</button>
-            <button class="preset" data-val="9">Maximum</button>
+            <button class="preset" data-val="1">Minimal</button>
+            <button class="preset" data-val="2">Default</button>
+            <button class="preset" data-val="3">More</button>
+            <button class="preset" data-val="5">High (rate-limit risk)</button>
           </div>
         </div>
 
         <div class="slider-card">
           <div class="slider-row">
             <span class="slider-label">Confidence gate</span>
-            <span class="slider-value" id="minConfidenceVal">65%</span>
+            <span class="slider-value" id="minConfidenceVal">Off</span>
           </div>
-          <div class="slider-desc">Refuse to submit unless the vote agrees this strongly at every position. Higher = fewer wrong submits but more captcha refreshes. 0% = submit anything.</div>
-          <input type="range" class="range" id="minConfidence" min="0" max="100" step="5" value="65" />
+          <div class="slider-desc">Refuse to submit unless the vote agrees this strongly. Off (0%) = always submit best guess and let HOTH reject if wrong. Higher = more refreshes, less wasted submissions.</div>
+          <input type="range" class="range" id="minConfidence" min="0" max="100" step="5" value="0" />
           <div class="presets" data-group="minConfidence">
             <button class="preset" data-val="0">Off</button>
             <button class="preset" data-val="50">Loose</button>

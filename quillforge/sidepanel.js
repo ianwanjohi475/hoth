@@ -597,9 +597,9 @@ chrome.storage.local.get({
   submitSelector:   'input[type="submit"].btn.btn-success.btn-large',
   delay:            3,
   autosolveEnabled: false,
-  ocrPasses:        5,
+  ocrPasses:        2,
   captchaLength:    5,
-  minConfidence:    0.65,
+  minConfidence:    0,
 }, (data) => {
   ridgeCurrentKey = data.ridgeApiKey || RIDGE_DEFAULT_KEY;
   ridgeKeyText.textContent = maskRidgeKey(ridgeCurrentKey);
@@ -621,9 +621,9 @@ chrome.storage.local.get({
   setRangeFill(captchaLengthEl);
   syncPresetGroup('captchaLength', data.captchaLength);
 
-  const confPct = Math.round((data.minConfidence ?? 0.65) * 100);
+  const confPct = Math.round((data.minConfidence ?? 0) * 100);
   minConfidenceEl.value = confPct;
-  minConfidenceVal.textContent = `${confPct}%`;
+  minConfidenceVal.textContent = confPct === 0 ? 'Off' : `${confPct}%`;
   setRangeFill(minConfidenceEl);
   syncPresetGroup('minConfidence', confPct);
 
@@ -664,7 +664,7 @@ captchaLengthEl.addEventListener('input', () => {
 
 minConfidenceEl.addEventListener('input', () => {
   const v = parseInt(minConfidenceEl.value);
-  minConfidenceVal.textContent = `${v}%`;
+  minConfidenceVal.textContent = v === 0 ? 'Off' : `${v}%`;
   syncPresetGroup('minConfidence', v);
 });
 

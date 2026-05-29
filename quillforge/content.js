@@ -985,7 +985,7 @@ window.__qfTokens = { QF, ICON };
     try {
       const settings = await getSettings();
       captchaSelForCatch = settings.captchaSelector;
-      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses, minConfidence } = settings;
+      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses, minConfidence, usePerCharMistral } = settings;
 
       const imgEl = document.querySelector(captchaSelector);
       if (!imgEl || !imgEl.src || imgEl.naturalWidth === 0) {
@@ -1026,10 +1026,10 @@ window.__qfTokens = { QF, ICON };
       const variants = await preprocessVariants(imgEl);
       if (!variants.length) throw new Error('Could not extract CAPTCHA image');
 
-      // Per-character segments — single-glyph crops the model OCRs
-      // independently. Adds L extra calls but gives one strong, focused
-      // vote per character position to break ties in the full-image vote.
-      const segments = segmentCharacters(imgEl, captchaLength);
+      // Per-character Mistral segments — disabled by default because each
+      // segment is one extra API call (×5 for HOTH) and was the main cause
+      // of rate-limit cascades. Opt in via usePerCharMistral setting.
+      const segments = usePerCharMistral ? segmentCharacters(imgEl, captchaLength) : [];
 
       // Pure-JS local OCR — runs in ~30-80 ms, no API. Returns a complete
       // candidate answer based on color segmentation + template matching.
@@ -1037,7 +1037,10 @@ window.__qfTokens = { QF, ICON };
       // per-position ensemble vote.
       const cvHint = pureCVSolve(imgEl, captchaLength);
 
-      setStatus(`Solving · ${ocrPasses} full + ${segments.length} per-char + 1 local…`, 'info');
+      const statusBits = [`${ocrPasses} full`];
+      if (segments.length) statusBits.push(`${segments.length} per-char`);
+      statusBits.push('1 local');
+      setStatus(`Solving · ${statusBits.join(' + ')}…`, 'info');
 
       const { text: result, confidence } = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
@@ -1206,7 +1209,7 @@ window.__qfTokens = { QF, ICON };
   function getSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get(
-        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay', 'captchaLength', 'ocrPasses', 'minConfidence'],
+        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay', 'captchaLength', 'ocrPasses', 'minConfidence', 'usePerCharMistral'],
         (result) => resolve({
           ridgeApiKey:     result.ridgeApiKey     || RIDGE_DEFAULT_KEY,
           captchaSelector: result.captchaSelector || '#writercaptcha > div:nth-child(2) > img:nth-child(1)',
@@ -1214,8 +1217,17 @@ window.__qfTokens = { QF, ICON };
           submitSelector:  result.submitSelector  || 'input[type="submit"].btn.btn-success.btn-large',
           delay:           result.delay !== undefined ? result.delay : 3,
           captchaLength:   Number.isFinite(result.captchaLength) ? result.captchaLength : 5,
-          ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 5,
-          minConfidence:   Number.isFinite(result.minConfidence) ? result.minConfidence : 0.65,
+          // Rate-limit reality: free tier ≈ 1 req/s. 2 full-image passes ≈ 2.5s.
+          // Defaulting to 2 keeps us out of 429 hell — bump in the slider if you
+          // want more samples and don't mind slower solves.
+          ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 2,
+          // OFF by default. User asked for "no low/high confidence" — system
+          // always submits its best guess and lets HOTH reject if wrong.
+          minConfidence:   Number.isFinite(result.minConfidence) ? result.minConfidence : 0,
+          // Per-character Mistral calls add captchaLength extra API calls and
+          // are what was busting the rate limit. OFF by default — pure-JS
+          // solver provides per-character votes for free.
+          usePerCharMistral: result.usePerCharMistral === true,
         })
       );
     });
@@ -1499,11 +1511,17 @@ window.__qfTokens = { QF, ICON };
   const PCV_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const PCV_FONT_SPECS = [
     '900 32px Arial, sans-serif',
+    'bold 32px Arial, sans-serif',
     '900 32px Tahoma, sans-serif',
     '900 32px Verdana, sans-serif',
     'bold 32px "Trebuchet MS", sans-serif',
     'bold 32px "Comic Sans MS", sans-serif',
   ];
+  // HOTH paints each character at a small random rotation. Flat templates
+  // miss them. Generating rotated variants at ±12°, ±6°, 0° gives every
+  // character ~6 fonts × 5 rotations = 30 templates to match against, which
+  // covers the realistic distortion range without ballooning compare time.
+  const PCV_ROTATIONS = [-12, -6, 0, 6, 12];
   let _pcvTemplatesCache = null;
 
   function pcvImageToMask(id, threshold = 128) {
@@ -1626,33 +1644,47 @@ window.__qfTokens = { QF, ICON };
     return union ? inter / union : 0;
   }
 
+  // Render a character to a canvas at the given font, optionally rotated
+  // around the canvas centre. Returns a binary mask the size of the padded
+  // canvas (large enough to hold the rotation without clipping corners).
+  function pcvRenderChar(ch, fontSpec, rotationDeg) {
+    const PAD = PCV_SIZE * 2;
+    const cv = document.createElement('canvas');
+    cv.width = PAD;
+    cv.height = PAD;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, PAD, PAD);
+    ctx.save();
+    ctx.translate(PAD / 2, PAD / 2);
+    if (rotationDeg) ctx.rotate(rotationDeg * Math.PI / 180);
+    ctx.fillStyle = 'black';
+    ctx.font = fontSpec;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+    return pcvImageToMask(ctx.getImageData(0, 0, PAD, PAD));
+  }
+
   function pcvGetTemplates() {
     if (_pcvTemplatesCache) return _pcvTemplatesCache;
     const templates = new Map();
+    const PAD = PCV_SIZE * 2;
     for (const fontSpec of PCV_FONT_SPECS) {
       for (const ch of PCV_CHARS) {
-        const cv = document.createElement('canvas');
-        cv.width = PCV_SIZE * 2;
-        cv.height = PCV_SIZE * 2;
-        const ctx = cv.getContext('2d');
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, cv.width, cv.height);
-        ctx.fillStyle = 'black';
-        ctx.font = fontSpec;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ch, cv.width / 2, cv.height / 2);
-
-        const id = ctx.getImageData(0, 0, cv.width, cv.height);
-        const mask = pcvImageToMask(id);
-        const trimmed = pcvTrimAndNormalize(mask, cv.width, cv.height);
-        if (!trimmed) continue;
-        if (!templates.has(ch)) templates.set(ch, []);
-        templates.get(ch).push(trimmed);
+        for (const rot of PCV_ROTATIONS) {
+          const mask = pcvRenderChar(ch, fontSpec, rot);
+          const trimmed = pcvTrimAndNormalize(mask, PAD, PAD);
+          if (!trimmed) continue;
+          if (!templates.has(ch)) templates.set(ch, []);
+          templates.get(ch).push(trimmed);
+        }
       }
     }
     _pcvTemplatesCache = templates;
-    console.log(`[Quillforge PureCV] templates ready (${templates.size} chars × ${PCV_FONT_SPECS.length} fonts)`);
+    const totalTpls = [...templates.values()].reduce((a, v) => a + v.length, 0);
+    console.log(`[Quillforge PureCV] templates ready (${templates.size} chars · ${totalTpls} total templates)`);
     return templates;
   }
 
