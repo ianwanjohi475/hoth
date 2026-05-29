@@ -1,0 +1,882 @@
+// ─── HOTH Suite — Content Script ────────────────────────────────────────────
+// Runs on all pages. HOTH watcher logic gates itself to thehoth.com/writer.
+// Article writer logic gates itself to recognized job pages.
+
+(() => {
+
+  // ── Shared settings ──────────────────────────────────────────────────────
+  let S = {
+    watcherEnabled: true,
+    autoClick:      true,
+    alarmDuration:  10,
+    checkInterval:  10,
+    spintaxEnabled: true,
+    writerEnabled:  true,
+    autoMode:       false,
+    autoSubmit:     false,
+    waitTime:       5,
+    groqApiKey:     '',
+    groqModel:      'llama-3.1-8b-instant',
+  };
+
+  function loadSettings(cb) {
+    chrome.storage.sync.get({
+      watcherEnabled: true,
+      autoClick:      true,
+      alarmDuration:  10,
+      checkInterval:  10,
+      spintaxEnabled: true,
+      writerEnabled:  true,
+      autoMode:       false,
+      autoSubmit:     false,
+      waitTime:       5,
+      groqApiKey:     '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',
+      groqModel:      'llama-3.1-8b-instant',
+    }, (data) => { S = data; if (cb) cb(); });
+  }
+
+  const isHothWriter  = () => /thehoth\.com\/writer/i.test(window.location.href);
+  const isJobPage     = () =>
+    !!document.querySelector('div.well') ||
+    document.body.innerText.includes('Client submitted the keywords') ||
+    !!document.querySelector('textarea[name="body"]') ||
+    !!document.querySelector('#body');
+
+  // ── Visibility helper ────────────────────────────────────────────────────
+  function isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    const s = window.getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity) > 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  SPINTAX SCANNER
+  // ═══════════════════════════════════════════════════════════════════════════
+  let spintaxTriggered = false;
+  let spintaxInterval  = null;
+  const SPINTAX_RE     = /requires\s+spintax/i;
+
+  function checkForSpintax() {
+    if (spintaxTriggered || !S.spintaxEnabled) return;
+    for (const el of document.querySelectorAll('.alert')) {
+      if (SPINTAX_RE.test(el.textContent)) { triggerSpintax('alert-div'); return; }
+    }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (SPINTAX_RE.test(node.nodeValue)) { triggerSpintax('text-node'); return; }
+    }
+  }
+
+  function triggerSpintax(source) {
+    console.log('[Inkwell] Spintax found via', source);
+    spintaxTriggered = true;
+    if (spintaxInterval) { clearInterval(spintaxInterval); spintaxInterval = null; }
+    chrome.runtime.sendMessage({ type: 'SPINTAX_ERROR_FOUND' });
+  }
+
+  function startSpintaxScanner() {
+    if (spintaxInterval) clearInterval(spintaxInterval);
+    spintaxTriggered = false;
+    checkForSpintax();
+    spintaxInterval = setInterval(checkForSpintax, 1000);
+  }
+
+  function stopSpintaxScanner() {
+    if (spintaxInterval) { clearInterval(spintaxInterval); spintaxInterval = null; }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  HOTH EDIT WATCHER
+  // ═══════════════════════════════════════════════════════════════════════════
+  let watchInterval = null;
+  let hasTriggered  = false;
+
+  function findClickableAncestor(node) {
+    let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    while (el && el !== document.body) {
+      const tag  = (el.tagName || '').toLowerCase();
+      const role = (el.getAttribute?.('role') || '').toLowerCase();
+      if (
+        tag === 'a' || tag === 'button' || tag === 'input' ||
+        role === 'button' || role === 'link' ||
+        el.hasAttribute?.('href') || el.hasAttribute?.('onclick') ||
+        el.style.cursor === 'pointer'
+      ) return el;
+      if ((el.textContent || '').trim().length > 20) break;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function findEditElement() {
+    const EDIT_RE = /\bedit\b/i;
+    const walker  = document.createTreeWalker(
+      document.body, NodeFilter.SHOW_TEXT,
+      { acceptNode(n) {
+        if (!EDIT_RE.test(n.nodeValue.trim())) return NodeFilter.FILTER_SKIP;
+        if (!isVisible(n.parentElement))        return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      }}
+    );
+    let textNode;
+    while ((textNode = walker.nextNode())) {
+      const clickable = findClickableAncestor(textNode) || textNode.parentElement;
+      if (clickable && isVisible(clickable)) return clickable;
+    }
+    for (const sel of ['[aria-label]', '[title]']) {
+      for (const el of document.querySelectorAll(sel)) {
+        const val = el.getAttribute('aria-label') || el.getAttribute('title');
+        if (val && EDIT_RE.test(val) && isVisible(el)) return el;
+      }
+    }
+    return null;
+  }
+
+  function extractHref(el) {
+    if (el.tagName?.toLowerCase() === 'a' && el.href) return el.href;
+    let p = el.parentElement;
+    while (p && p !== document.body) {
+      if (p.tagName?.toLowerCase() === 'a' && p.href) return p.href;
+      p = p.parentElement;
+    }
+    return el.querySelector?.('a[href]')?.href || null;
+  }
+
+  function checkPage() {
+    if (!S.watcherEnabled || hasTriggered) return;
+    const editEl = findEditElement();
+    if (!editEl) return;
+    const articleUrl = extractHref(editEl);
+    console.log('[Inkwell] Edit found. URL:', articleUrl, 'el:', editEl);
+    hasTriggered = true;
+    chrome.runtime.sendMessage({
+      type: 'EDIT_FOUND',
+      articleUrl,
+      alarmDuration: S.alarmDuration,
+      autoClick:     S.autoClick,
+    });
+  }
+
+  function startWatching() {
+    if (watchInterval) clearInterval(watchInterval);
+    watchInterval = setInterval(checkPage, S.checkInterval * 1000);
+    console.log(`[Inkwell] Edit watcher started — every ${S.checkInterval}s`);
+  }
+
+  function stopWatching() {
+    if (watchInterval) { clearInterval(watchInterval); watchInterval = null; }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  SPA NAVIGATION WATCHER
+  // ═══════════════════════════════════════════════════════════════════════════
+  let lastUrl = window.location.href;
+
+  function onUrlChange() {
+    const newUrl = window.location.href;
+    if (newUrl === lastUrl) return;
+    lastUrl = newUrl;
+    console.log('[Inkwell] SPA navigation →', newUrl);
+    hasTriggered = false;
+    if ((isHothWriter() || isJobPage()) && S.spintaxEnabled) startSpintaxScanner();
+  }
+
+  window.addEventListener('popstate', onUrlChange);
+  (function patchHistory() {
+    for (const m of ['pushState', 'replaceState']) {
+      const orig = history[m];
+      history[m] = function (...args) { orig.apply(this, args); onUrlChange(); };
+    }
+  })();
+  new MutationObserver(onUrlChange).observe(document.body, { childList: true, subtree: false });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  ARTICLE AUTO-WRITER
+  // ═══════════════════════════════════════════════════════════════════════════
+  let alreadyRan = false;
+
+  // ── Debugger helpers ──────────────────────────────────────────────────────
+  function attachDebugger() {
+    return new Promise(r => chrome.runtime.sendMessage({ type: 'ATTACH_DEBUGGER' }, res => r(res?.ok)));
+  }
+  function detachDebugger() {
+    chrome.runtime.sendMessage({ type: 'DETACH_DEBUGGER' });
+  }
+
+  // ── Keyword extraction ────────────────────────────────────────────────────
+  function getKeywords() {
+    const wells = document.querySelectorAll('div.well, div[class*="well"]');
+    for (const well of wells) {
+      for (const ul of well.querySelectorAll('ul')) {
+        const texts = [...ul.querySelectorAll('li')].map(li => li.innerText.trim().toLowerCase());
+        const bad   = texts.some(t =>
+          t.includes('brand name') || t.includes('url') || t.includes('filler') || t.includes('click here')
+        );
+        if (bad) continue;
+        const all = [...ul.querySelectorAll('li')].map(li => li.innerText.trim()).filter(Boolean);
+        if (all.length) return all;
+      }
+    }
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.textContent.includes('Client submitted the keywords')) {
+        let el = node.parentElement;
+        for (let i = 0; i < 10; i++) {
+          el = el?.nextElementSibling;
+          if (!el) break;
+          if (el.tagName === 'UL') {
+            const all = [...el.querySelectorAll('li')].map(li => li.innerText.trim()).filter(Boolean);
+            if (all.length) return all;
+          }
+          const ul = el.querySelector?.('ul');
+          if (ul) {
+            const all = [...ul.querySelectorAll('li')].map(li => li.innerText.trim()).filter(Boolean);
+            if (all.length) return all;
+          }
+        }
+      }
+    }
+    return [];
+  }
+
+  // ── Native value setter (React-friendly) ──────────────────────────────────
+  function setNativeValue(el, value) {
+    const proto  = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // ── Markdown stripper ─────────────────────────────────────────────────────
+  function toTitleCase(str) {
+    const minors = ['a','an','the','and','but','or','for','nor','on','at','to','by','in','of','up','as','is'];
+    return str.toLowerCase().split(' ').map((w, i) =>
+      i === 0 || !minors.includes(w) ? w.charAt(0).toUpperCase() + w.slice(1) : w
+    ).join(' ');
+  }
+
+  function stripMarkdown(text) {
+    return text
+      .replace(/^#{1,6}\s*(.+)/gm, (_, h) => toTitleCase(h))
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g,     '$1')
+      .replace(/^[-*]\s+/gm,     '')
+      .replace(/`{1,3}/g,        '')
+      .trim();
+  }
+
+  // ── Submit button ─────────────────────────────────────────────────────────
+  function clickSubmitButton() {
+    const btn =
+      document.querySelector('input[name="submit"]') ||
+      document.querySelector('input[value="Submit For Review"]') ||
+      document.querySelector('input[type="submit"]') ||
+      document.querySelector('button[type="submit"]') ||
+      [...document.querySelectorAll('button,input[type="button"]')]
+        .find(el => el.value?.toLowerCase().includes('submit') || el.innerText?.toLowerCase().includes('submit'));
+    if (!btn) return false;
+    btn.click();
+    return true;
+  }
+
+  // ── Progress card UI ──────────────────────────────────────────────────────
+  function createCard() {
+    if (document.getElementById('hs-card')) return;
+    const style  = document.createElement('style');
+    style.id     = 'hs-style';
+    style.textContent = `
+      #hs-card {
+        position:fixed;bottom:24px;right:24px;z-index:2147483647;
+        width:260px;background:#0d1117;border:1px solid #21262d;
+        border-radius:14px;padding:14px 16px;
+        font-family:'Segoe UI',sans-serif;
+        box-shadow:0 8px 32px rgba(0,0,0,0.6);
+        animation:hs-slide 0.2s ease;
+      }
+      @keyframes hs-slide{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+      #hs-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+      #hs-title{font-size:12px;font-weight:700;color:#f0f6fc}
+      #hs-kw{font-size:10px;color:#14B8A6;font-weight:600;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .hs-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;opacity:0.3;transition:opacity 0.3s}
+      .hs-row.active{opacity:1}.hs-row.done{opacity:0.65}.hs-row.error{opacity:1}
+      .hs-dot{width:18px;height:18px;border-radius:50%;flex-shrink:0;background:#161b22;border:1.5px solid #30363d;display:flex;align-items:center;justify-content:center;font-size:9px;color:#484f58;transition:all 0.3s}
+      .hs-dot.active{border-color:#14B8A6;color:#14B8A6;animation:hs-pulse 1s infinite}
+      .hs-dot.done{background:#14B8A6;border-color:#14B8A6;color:#fff}
+      .hs-dot.error{background:#f85149;border-color:#f85149;color:#fff}
+      @keyframes hs-pulse{0%,100%{box-shadow:0 0 0 0 rgba(20,184,166,0.4)}50%{box-shadow:0 0 0 4px rgba(20,184,166,0)}}
+      .hs-lbl{font-size:11px;color:#8b949e}
+      .hs-lbl.active{color:#f0f6fc;font-weight:600}
+      .hs-lbl.done{color:#2DD4BF}
+      .hs-lbl.error{color:#f85149}
+      #hs-bar-wrap{height:3px;background:#161b22;border-radius:3px;margin:10px 0 8px;overflow:hidden}
+      #hs-bar{height:100%;width:0%;background:linear-gradient(90deg,#14B8A6,#2DD4BF);border-radius:3px;transition:width 0.5s ease}
+      #hs-foot{font-size:10px;color:#484f58;text-align:center}
+    `;
+    document.head.appendChild(style);
+
+    const card   = document.createElement('div');
+    card.id      = 'hs-card';
+    card.innerHTML = `
+      <div id="hs-hdr"><span style="display:inline-flex;color:#2DD4BF"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/></svg></span><span id="hs-title">Inkwell · Article Writer</span></div>
+      <div id="hs-kw">Detecting keyword…</div>
+      <div class="hs-row" id="hs-row-1"><div class="hs-dot" id="hs-dot-1">1</div><span class="hs-lbl" id="hs-lbl-1">Detect keyword</span></div>
+      <div class="hs-row" id="hs-row-2"><div class="hs-dot" id="hs-dot-2">2</div><span class="hs-lbl" id="hs-lbl-2">Generate article</span></div>
+      <div class="hs-row" id="hs-row-3"><div class="hs-dot" id="hs-dot-3">3</div><span class="hs-lbl" id="hs-lbl-3">Fill form fields</span></div>
+      <div class="hs-row" id="hs-row-4"><div class="hs-dot" id="hs-dot-4">4</div><span class="hs-lbl" id="hs-lbl-4">Submit assignment</span></div>
+      <div id="hs-bar-wrap"><div id="hs-bar"></div></div>
+      <div id="hs-foot">Starting…</div>
+    `;
+    document.body.appendChild(card);
+  }
+
+  function updateStep(n, state, label) {
+    const row = document.getElementById(`hs-row-${n}`);
+    const dot = document.getElementById(`hs-dot-${n}`);
+    const lbl = document.getElementById(`hs-lbl-${n}`);
+    if (!row) return;
+    row.className = `hs-row ${state}`;
+    dot.className = `hs-dot ${state}`;
+    lbl.className = `hs-lbl ${state}`;
+    if (label) lbl.textContent = label;
+    if (state === 'done')  dot.textContent = '✓';
+    if (state === 'error') dot.textContent = '✕';
+    const pct = { 1: 15, 2: 45, 3: 75, 4: 100 };
+    if (state === 'done') document.getElementById('hs-bar').style.width = pct[n] + '%';
+  }
+
+  function setFoot(t) { const f = document.getElementById('hs-foot'); if (f) f.textContent = t; }
+  function setKw(t)   { const e = document.getElementById('hs-kw');   if (e) e.textContent = t; }
+  function removeCard() {
+    document.getElementById('hs-card')?.remove();
+    document.getElementById('hs-style')?.remove();
+  }
+
+  function countdown(secs) {
+    return new Promise(res => {
+      let rem = secs;
+      setFoot(`Submitting in ${rem}s…`);
+      const iv = setInterval(() => {
+        rem--;
+        if (rem <= 0) { clearInterval(iv); res(); }
+        else setFoot(`Submitting in ${rem}s…`);
+      }, 1000);
+    });
+  }
+
+  // ── Groq API ──────────────────────────────────────────────────────────────
+  async function callGroq(keyword, extraKeywords = []) {
+    const secNote = extraKeywords.length
+      ? '\n- Naturally incorporate these related keywords: ' + extraKeywords.map(k => `"${k}"`).join(', ')
+      : '';
+
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${S.groqApiKey}` },
+      body:    JSON.stringify({
+        model:       S.groqModel || 'llama-3.1-8b-instant',
+        max_tokens:  1200,
+        temperature: 0.7,
+        messages: [
+          {
+            role:    'system',
+            content: 'You are a professional blog writer. Write clean plain text articles with no markdown formatting whatsoever.'
+          },
+          {
+            role:    'user',
+            content: `Write a 700-word informative blog article about: "${keyword}".
+
+Requirements:
+- Start with a compelling title of AT LEAST 5 words on its own line (do NOT use # symbols)
+- Use 3-4 subheadings in Title Case on their own lines (do NOT use ## symbols or any markdown)
+- Leave a blank line between each section
+- Use second person (you/your), never first person (I/we)
+- Do not mention any brand names
+- Active voice only
+- No markdown symbols anywhere: no #, ##, **, *, backticks, or dashes for bullets
+- Be practical and informative` + secNote
+          }
+        ]
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || '';
+  }
+
+  // ── Main writer process ───────────────────────────────────────────────────
+  async function runWriterProcess() {
+    if (alreadyRan) return;
+    alreadyRan = true;
+
+    createCard();
+
+    // Step 1 — detect keyword
+    updateStep(1, 'active');
+    setFoot('Scanning page…');
+
+    const allKws   = getKeywords();
+    const keyword  = allKws[0] || null;
+    const extraKws = allKws.slice(1);
+
+    if (!keyword) {
+      updateStep(1, 'error', 'No keyword found');
+      setFoot('Could not detect keyword.');
+      setTimeout(removeCard, 5000);
+      return;
+    }
+    setKw(`"${keyword}"${extraKws.length ? ` + ${extraKws.length} more` : ''}`);
+    updateStep(1, 'done', `Keyword${extraKws.length ? 's' : ''} detected`);
+
+    // Step 2 — generate article
+    updateStep(2, 'active', 'Generating article…');
+    setFoot(`Using ${S.groqModel}…`);
+
+    let article;
+    try {
+      article = await callGroq(keyword, extraKws);
+      updateStep(2, 'done', 'Article generated');
+    } catch (err) {
+      updateStep(2, 'error', err.message.slice(0, 38));
+      setFoot('API error — check your key.');
+      setTimeout(removeCard, 6000);
+      return;
+    }
+
+    const clean = stripMarkdown(article);
+
+    // Step 3 — fill form
+    updateStep(3, 'active', 'Filling form…');
+    setFoot('Pasting content…');
+
+    const subjectInput =
+      document.querySelector('input[name="subject"]') ||
+      document.querySelector('#subject') ||
+      [...document.querySelectorAll('input[type="text"]')].find(el =>
+        (el.closest('tr,div,label')?.textContent || '').toLowerCase().includes('subject')
+      );
+    if (subjectInput) setNativeValue(subjectInput, keyword);
+
+    const bodyArea =
+      document.querySelector('textarea[name="body"]') ||
+      document.querySelector('#body') ||
+      document.querySelector('textarea');
+
+    if (!bodyArea) {
+      updateStep(3, 'error', 'Body field not found');
+      setFoot('Could not find article body field.');
+      setTimeout(removeCard, 5000);
+      return;
+    }
+    setNativeValue(bodyArea, clean);
+    updateStep(3, 'done', 'Fields filled');
+
+    // Step 4 — submit
+    if (!S.autoSubmit) {
+      updateStep(4, 'done', 'Submit manually');
+      setFoot('Done — submit when ready.');
+      setTimeout(removeCard, 6000);
+      return;
+    }
+
+    updateStep(4, 'active', 'Submitting…');
+
+    if (S.waitTime > 0) await countdown(S.waitTime);
+
+    setFoot('Attaching dialog handler…');
+    const attached = await attachDebugger();
+    if (!attached) {
+      setFoot('⚠️ Could not attach debugger — submit manually.');
+      updateStep(4, 'error', 'Debugger failed');
+      setTimeout(removeCard, 6000);
+      return;
+    }
+
+    setFoot('Submitting…');
+    const ok = clickSubmitButton();
+
+    if (ok) {
+      updateStep(4, 'done', 'Submitted!');
+      setFoot('Assignment submitted ✓');
+      setTimeout(detachDebugger, 6000);
+    } else {
+      updateStep(4, 'error', 'Submit button not found');
+      setFoot('Submit manually.');
+      detachDebugger();
+    }
+    setTimeout(removeCard, 4000);
+  }
+
+  // ── FAB button ────────────────────────────────────────────────────────────
+  function injectFAB() {
+    if (document.getElementById('hs-fab')) return;
+    const btn    = document.createElement('button');
+    btn.id       = 'hs-fab';
+    btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/></svg>Write Article';
+    Object.assign(btn.style, {
+      position:'fixed', bottom:'24px', right:'24px', zIndex:'2147483646',
+      padding:'12px 20px', background:'linear-gradient(135deg,#14B8A6,#2DD4BF)',
+      color:'#fff', border:'none', borderRadius:'50px', fontSize:'13px',
+      fontWeight:'700', fontFamily:'Segoe UI, sans-serif', cursor:'pointer',
+      boxShadow:'0 6px 24px rgba(20,184,166,0.4)', transition:'transform 0.15s',
+      userSelect:'none',
+    });
+    btn.onmouseenter = () => btn.style.transform = 'scale(1.05)';
+    btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+    btn.onclick = async () => {
+      if (!S.groqApiKey) {
+        chrome.runtime.sendMessage({ type: 'PLAY_ALERT_SOUND' });
+        setFoot?.('Set API key in extension popup first.');
+        return;
+      }
+      btn.remove();
+      alreadyRan = false;
+      runWriterProcess();
+    };
+    document.body.appendChild(btn);
+  }
+
+  function initArticleWriter() {
+    if (!S.writerEnabled || !isJobPage()) return;
+    if (!S.groqApiKey) { injectFAB(); return; }
+    if (S.autoMode)    runWriterProcess();
+    else               injectFAB();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  MESSAGES FROM POPUP / BACKGROUND
+  // ═══════════════════════════════════════════════════════════════════════════
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+    if (msg.type === 'SETTINGS_UPDATED') {
+      const prevInterval = S.checkInterval;
+      const prevWatcher  = S.watcherEnabled;
+      const prevSpintax  = S.spintaxEnabled;
+      S = { ...S, ...msg.settings };
+
+      if (isHothWriter() || isJobPage()) {
+        // Spintax scanner
+        if (S.spintaxEnabled && !prevSpintax) startSpintaxScanner();
+        else if (!S.spintaxEnabled && prevSpintax) stopSpintaxScanner();
+
+        // Edit watcher
+        if (!prevWatcher && S.watcherEnabled) {
+          hasTriggered = false; startWatching();
+        } else if (prevWatcher && !S.watcherEnabled) {
+          stopWatching();
+        } else if (S.watcherEnabled && prevInterval !== S.checkInterval) {
+          // Interval changed — restart with new interval
+          hasTriggered = false; startWatching();
+        }
+      }
+      sendResponse({ ok: true });
+    }
+
+    if (msg.type === 'GET_STATUS') {
+      sendResponse({
+        isWatching:      S.watcherEnabled,
+        spintaxEnabled:  S.spintaxEnabled,
+        writerEnabled:   S.writerEnabled,
+        hasTriggered,
+        spintaxTriggered,
+        alarmDuration:   S.alarmDuration,
+        checkInterval:   S.checkInterval,
+      });
+    }
+
+    if (msg.type === 'MANUAL_CHECK') {
+      hasTriggered = false;
+      checkPage();
+      sendResponse({ ok: true });
+    }
+
+    if (msg.type === 'MANUAL_WRITE') {
+      alreadyRan = false;
+      initArticleWriter();
+      sendResponse({ ok: true });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  INIT
+  // ═══════════════════════════════════════════════════════════════════════════
+  loadSettings(() => {
+    if (isHothWriter()) {
+      if (S.spintaxEnabled) startSpintaxScanner();
+      if (S.watcherEnabled) startWatching();
+    } else if (isJobPage() && S.spintaxEnabled) {
+      startSpintaxScanner();
+    }
+    initArticleWriter();
+  });
+
+  // Re-init article writer when DOM changes significantly (SPA)
+  new MutationObserver(() => {
+    if (
+      S.writerEnabled && isJobPage() &&
+      !document.getElementById('hs-fab') &&
+      !document.getElementById('hs-card')
+    ) {
+      alreadyRan = false;
+      initArticleWriter();
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  RIDGE NEURAL SOLVER — Content Script (merged)
+// ═══════════════════════════════════════════════════════════════════════════════
+(function () {
+  'use strict';
+
+  const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
+
+  let autosolveActive = false;
+  let solveLoop       = null;
+  let overlayBtn      = null;
+  let statusEl        = null;
+
+  // ─── Inject overlay button ─────────────────────────────────────────────────
+  function injectOverlay() {
+    if (document.getElementById('rns-overlay')) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'rns-overlay';
+    wrap.style.cssText = `
+      position: fixed; bottom: 90px; right: 24px; z-index: 2147483646;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+      font-family: 'Courier New', monospace;
+    `;
+
+    statusEl = document.createElement('div');
+    statusEl.id = 'rns-status';
+    statusEl.style.cssText = `
+      background: rgba(10,10,15,0.92); color: #2DD4BF; font-size: 11px;
+      padding: 5px 10px; border-radius: 6px; border: 1px solid #2DD4BF40;
+      max-width: 220px; text-align: right; display: none; letter-spacing: 0.5px;
+    `;
+
+    overlayBtn = document.createElement('button');
+    overlayBtn.id = 'rns-toggle-btn';
+    overlayBtn.textContent = '⚡ AUTOSOLVE';
+    overlayBtn.style.cssText = `
+      background: linear-gradient(135deg, #0a0a0f 0%, #111120 100%);
+      color: #2DD4BF; border: 1.5px solid #2DD4BF60; border-radius: 10px;
+      padding: 10px 18px; font-family: 'Courier New', monospace; font-size: 12px;
+      font-weight: bold; letter-spacing: 1.5px; cursor: pointer;
+      box-shadow: 0 0 18px #2DD4BF30, 0 4px 20px rgba(0,0,0,0.6);
+      transition: all 0.2s ease; outline: none; text-transform: uppercase;
+    `;
+
+    overlayBtn.addEventListener('mouseenter', () => {
+      overlayBtn.style.boxShadow = '0 0 28px #2DD4BF60, 0 4px 24px rgba(0,0,0,0.7)';
+      overlayBtn.style.borderColor = '#2DD4BF';
+    });
+    overlayBtn.addEventListener('mouseleave', () => {
+      if (autosolveActive) return;
+      overlayBtn.style.boxShadow = '0 0 18px #2DD4BF30, 0 4px 20px rgba(0,0,0,0.6)';
+      overlayBtn.style.borderColor = '#2DD4BF60';
+    });
+    overlayBtn.addEventListener('click', toggleAutosolve);
+
+    wrap.appendChild(statusEl);
+    wrap.appendChild(overlayBtn);
+    document.body.appendChild(wrap);
+
+    chrome.storage.local.get(['autosolveEnabled'], (res) => {
+      if (res.autosolveEnabled) startAutosolve(true);
+    });
+  }
+
+  function setStatus(msg, color) {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.style.color = color || '#2DD4BF';
+    statusEl.style.display = msg ? 'block' : 'none';
+  }
+
+  function toggleAutosolve() {
+    if (autosolveActive) stopAutosolve(); else startAutosolve(false);
+  }
+
+  function startAutosolve(silent) {
+    if (autosolveActive) return;
+    autosolveActive = true;
+    chrome.storage.local.set({ autosolveEnabled: true });
+    setOverlayStopMode();
+    if (!silent) setStatus('Scanning for CAPTCHA...', '#2DD4BF');
+    runLoop();
+  }
+
+  function stopAutosolve() {
+    autosolveActive = false;
+    if (solveLoop) { clearTimeout(solveLoop); solveLoop = null; }
+    chrome.storage.local.set({ autosolveEnabled: false });
+    setOverlayStartMode();
+    setStatus('', '');
+  }
+
+  function setOverlayStopMode() {
+    if (!overlayBtn) return;
+    overlayBtn.textContent = '■ STOP';
+    overlayBtn.style.color = '#FB7185';
+    overlayBtn.style.borderColor = '#FB718560';
+    overlayBtn.style.boxShadow = '0 0 18px #FB718530, 0 4px 20px rgba(0,0,0,0.6)';
+  }
+
+  function setOverlayStartMode() {
+    if (!overlayBtn) return;
+    overlayBtn.textContent = '⚡ AUTOSOLVE';
+    overlayBtn.style.color = '#2DD4BF';
+    overlayBtn.style.borderColor = '#2DD4BF60';
+    overlayBtn.style.boxShadow = '0 0 18px #2DD4BF30, 0 4px 20px rgba(0,0,0,0.6)';
+  }
+
+  // ─── Main solve loop ───────────────────────────────────────────────────────
+  async function runLoop() {
+    if (!autosolveActive) return;
+    try {
+      const settings = await getSettings();
+      const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay } = settings;
+
+      const imgEl = document.querySelector(captchaSelector);
+      if (!imgEl || !imgEl.src || imgEl.naturalWidth === 0) {
+        setStatus('Scanning for CAPTCHA...', '#ffaa00');
+        scheduleNext(1200);
+        return;
+      }
+
+      setStatus('CAPTCHA found! Reading...', '#00ccff');
+      const base64 = await imageToBase64(imgEl);
+      setStatus('Solving...', '#00ccff');
+
+      const result = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { type: 'SOLVE_CAPTCHA', imageBase64: base64, apiKey: ridgeApiKey },
+          (response) => {
+            if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+            if (!response) return reject(new Error('No response from background'));
+            if (!response.success) return reject(new Error(response.error));
+            resolve(response.text);
+          }
+        );
+      });
+
+      if (!autosolveActive) return;
+      setStatus(`Solved: ${result}`, '#2DD4BF');
+
+      const inputEl = document.querySelector(inputSelector);
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.value = result;
+        inputEl.dispatchEvent(new Event('input',  { bubbles: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        inputEl.blur();
+      }
+
+      const delayMs = (parseFloat(delay) || 0) * 1000;
+      if (delayMs > 0) {
+        let remaining = parseFloat(delay);
+        const countdownId = setInterval(() => {
+          if (!autosolveActive) return;
+          setStatus(`Submitting in ${remaining.toFixed(1)}s...`, '#ffaa00');
+          remaining -= 0.1;
+        }, 100);
+        await sleep(delayMs);
+        clearInterval(countdownId);
+      }
+
+      if (!autosolveActive) return;
+
+      const submitEl =
+        document.querySelector(submitSelector) ||
+        document.querySelector('input[type="submit"].btn-success') ||
+        document.querySelector('input[type="submit"]');
+
+      if (submitEl) {
+        submitEl.click();
+        setStatus('Submitted! Waiting for next...', '#2DD4BF');
+      } else {
+        setStatus('Submit btn not found — retrying...', '#FB7185');
+      }
+      scheduleNext(2000);
+
+    } catch (err) {
+      setStatus('Retrying...', '#ffaa00');
+      scheduleNext(2000);
+    }
+  }
+
+  function scheduleNext(ms) {
+    if (!autosolveActive) return;
+    solveLoop = setTimeout(runLoop, ms);
+  }
+
+  function getSettings() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(
+        ['ridgeApiKey', 'captchaSelector', 'inputSelector', 'submitSelector', 'delay'],
+        (result) => resolve({
+          ridgeApiKey:      result.ridgeApiKey      || RIDGE_DEFAULT_KEY,
+          captchaSelector:  result.captchaSelector  || '#writercaptcha > div:nth-child(2) > img:nth-child(1)',
+          inputSelector:    result.inputSelector    || 'input[required]',
+          submitSelector:   result.submitSelector   || 'input[type="submit"].btn.btn-success.btn-large',
+          delay:            result.delay !== undefined ? result.delay : 3,
+        })
+      );
+    });
+  }
+
+  function imageToBase64(imgEl) {
+    return new Promise((resolve, reject) => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width  = imgEl.naturalWidth  || imgEl.width  || 200;
+        canvas.height = imgEl.naturalHeight || imgEl.height || 60;
+        canvas.getContext('2d').drawImage(imgEl, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        if (dataUrl && dataUrl.length > 200) resolve(dataUrl);
+        else fetchImageAsBase64(imgEl.src).then(resolve).catch(reject);
+      } catch (e) {
+        fetchImageAsBase64(imgEl.src).then(resolve).catch(reject);
+      }
+    });
+  }
+
+  function fetchImageAsBase64(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Cannot load image'));
+      img.src = url.split('?')[0] + '?_rns=' + Date.now();
+    });
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ─── Listen for messages from popup ───────────────────────────────────────
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'START_AUTOSOLVE') startAutosolve(false);
+    if (msg.type === 'STOP_AUTOSOLVE')  stopAutosolve();
+  });
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
+  if (document.body) injectOverlay();
+  else document.addEventListener('DOMContentLoaded', injectOverlay);
+
+})();

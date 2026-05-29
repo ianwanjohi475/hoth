@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Inkwell</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ───────────────────────────────────────────────────── -->
+  <div class="header">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="#fff"><path d="M12 3s-6 7.5-6 11a6 6 0 0 0 12 0c0-3.5-6-11-6-11z"/></svg>
+    </div>
+    <div class="header-text">
+      <div class="header-title">Inkwell</div>
+      <div class="header-sub">Writer Automation Suite</div>
+    </div>
+    <div class="master-status on" id="masterStatus">Active</div>
+  </div>
+
+  <!-- ── Section 1: Edit Watcher ──────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header" data-target="watcher-body">
+      <div class="section-header-left">
+        <span class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></span>
+        <span class="section-label">Edit Watcher</span>
+        <span class="section-badge badge-on" id="watcherBadge">ON</span>
+      </div>
+      <span class="chevron open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </div>
+    <div class="section-body expanded" id="watcher-body">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Edit Watcher</div>
+          <div class="toggle-desc">Scan thehoth.com/writer for the Edit button</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="watcherEnabled" checked><span class="pill-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto-Open Article</div>
+          <div class="toggle-desc">Open article in a new tab & close writer on Edit found</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="autoClick" checked><span class="pill-slider"></span></label>
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span class="slider-label">Alarm Duration</span><span class="slider-val" id="alarmDurationVal">10s</span></div>
+        <div class="slider-desc">How long the audio alarm rings when Edit is found</div>
+        <input type="range" id="alarmDuration" min="1" max="60" value="10">
+        <div class="preset-row">
+          <button class="preset-btn" data-group="alarm" data-val="5">5s</button>
+          <button class="preset-btn active" data-group="alarm" data-val="10">10s</button>
+          <button class="preset-btn" data-group="alarm" data-val="20">20s</button>
+          <button class="preset-btn" data-group="alarm" data-val="30">30s</button>
+          <button class="preset-btn" data-group="alarm" data-val="60">60s</button>
+        </div>
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span class="slider-label">Check Interval</span><span class="slider-val" id="checkIntervalVal">10s</span></div>
+        <div class="slider-desc" id="intervalDesc">Scan for "Edit" button every 10 seconds</div>
+        <input type="range" id="checkInterval" min="1" max="120" value="10">
+        <div class="preset-row">
+          <button class="preset-btn" data-group="interval" data-val="5">5s</button>
+          <button class="preset-btn active" data-group="interval" data-val="10">10s</button>
+          <button class="preset-btn" data-group="interval" data-val="30">30s</button>
+          <button class="preset-btn" data-group="interval" data-val="60">60s</button>
+        </div>
+      </div>
+      <div class="quick-row">
+        <button class="btn btn-secondary btn-sm" id="checkNowBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Check Now</button>
+        <button class="btn btn-secondary btn-sm" id="openWriterBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>Open Writer</button>
+        <button class="btn btn-danger btn-sm" id="stopAlarmBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>Stop Alarm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Spintax Scanner ───────────────────────────────── -->
+  <div class="section">
+    <div class="section-header" data-target="spintax-body">
+      <div class="section-header-left">
+        <span class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+        <span class="section-label">Spintax Scanner</span>
+        <span class="section-badge badge-on" id="spintaxBadge">ON</span>
+      </div>
+      <span class="chevron open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </div>
+    <div class="section-body expanded" id="spintax-body">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Spintax Detection</div>
+          <div class="toggle-desc">Monitor for the "requires spintax" error</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="spintaxEnabled" checked><span class="pill-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Email Notifications</div>
+          <div class="toggle-desc">Send an email alert via EmailJS on detection</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="emailEnabled" checked><span class="pill-slider"></span></label>
+      </div>
+      <div class="info-row">
+        <span class="info-dot dot-orange"></span>
+        <span>On detection: closes the article tab and opens a full-screen alarm with audio alert.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Article Writer ────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header" data-target="writer-body">
+      <div class="section-header-left">
+        <span class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/><path d="M12 17H7"/></svg></span>
+        <span class="section-label">Article Writer</span>
+        <span class="section-badge badge-on" id="writerBadge">ON</span>
+      </div>
+      <span class="chevron open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </div>
+    <div class="section-body expanded" id="writer-body">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Article Writer</div>
+          <div class="toggle-desc">Enable AI article generation on job pages</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="writerEnabled" checked><span class="pill-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto Mode</div>
+          <div class="toggle-desc">Start writing automatically on a detected job page</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="autoMode"><span class="pill-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto Submit</div>
+          <div class="toggle-desc">Submit the form automatically after filling</div>
+        </div>
+        <label class="pill-wrap"><input type="checkbox" id="autoSubmit"><span class="pill-slider"></span></label>
+      </div>
+      <div class="slider-row">
+        <div class="slider-header"><span class="slider-label">Wait Before Submit</span><span class="slider-val" id="waitTimeVal">5s</span></div>
+        <div class="slider-desc">Countdown delay before auto-submitting</div>
+        <input type="range" id="waitTime" min="0" max="30" value="5">
+        <div class="preset-row">
+          <button class="preset-btn" data-group="wait" data-val="0">0s</button>
+          <button class="preset-btn active" data-group="wait" data-val="5">5s</button>
+          <button class="preset-btn" data-group="wait" data-val="10">10s</button>
+          <button class="preset-btn" data-group="wait" data-val="15">15s</button>
+        </div>
+      </div>
+      <div class="quick-row">
+        <button class="btn btn-green btn-sm" id="writeNowBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="m16 8-9 9"/></svg>Write Now</button>
+        <button class="btn btn-secondary btn-sm" id="testApiBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/></svg>Test API</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 4: API Settings ──────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header" data-target="api-body">
+      <div class="section-header-left">
+        <span class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg></span>
+        <span class="section-label">API Settings</span>
+        <span class="section-badge">GROQ</span>
+      </div>
+      <span class="chevron open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </div>
+    <div class="section-body expanded" id="api-body">
+      <div class="api-row">
+        <div class="api-row-label">Groq API Key</div>
+        <div class="api-key-display" id="apiKeyDisplay">gsk_••••••••••••••••••••••••••••••••</div>
+        <div class="api-locked" id="lockStatus">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span class="locked-msg">Protected — enter PIN to change</span>
+        </div>
+        <div class="pin-area" id="pinArea">
+          <input type="password" class="pin-input" id="pinInput" placeholder="Enter 4-digit PIN" maxlength="4" inputmode="numeric">
+          <div style="display:flex;gap:7px">
+            <button class="btn btn-secondary btn-sm" id="pinCancelBtn" style="flex:1">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="pinConfirmBtn" style="flex:1">Unlock</button>
+          </div>
+        </div>
+        <div class="pin-area" id="keyEditArea">
+          <input type="text" class="key-input" id="keyInput" placeholder="gsk_..." autocomplete="off" spellcheck="false">
+          <div style="display:flex;gap:7px">
+            <button class="btn btn-secondary btn-sm" id="keyCancelBtn" style="flex:1">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="keySaveBtn" style="flex:1">Save Key</button>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="changeKeyBtn" style="width:100%">Change API Key</button>
+      </div>
+      <div class="api-row">
+        <div class="api-row-label">Model</div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="model-badge">llama-3.1-8b-instant</span>
+          <span style="font-size:10px;color:var(--faint)">Fixed</span>
+        </div>
+      </div>
+      <div class="info-row" id="apiStatusRow">
+        <span class="info-dot dot-grey" id="apiDot"></span>
+        <span id="apiStatusText">API not tested</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 5: Ridge Neural Solver ───────────────────────────── -->
+  <div class="section">
+    <div class="section-header" data-target="ridge-body">
+      <div class="section-header-left">
+        <span class="section-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></span>
+        <span class="section-label">Ridge Neural Solver</span>
+        <span class="section-badge">CAPTCHA</span>
+      </div>
+      <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </div>
+    <div class="section-body collapsed" id="ridge-body">
+      <div class="api-row">
+        <div class="api-row-label">Mistral API Key</div>
+        <div class="api-key-display" id="ridgeKeyDisplay">••••••••••••••••••••••••••••••••</div>
+        <div class="api-locked" id="ridgeLockStatus">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span class="locked-msg">Protected — enter PIN to change</span>
+        </div>
+        <div class="pin-area" id="ridgePinArea">
+          <input type="password" class="pin-input" id="ridgePinInput" placeholder="Enter 4-digit PIN" maxlength="4" inputmode="numeric">
+          <div style="display:flex;gap:7px">
+            <button class="btn btn-secondary btn-sm" id="ridgePinCancelBtn" style="flex:1">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="ridgePinConfirmBtn" style="flex:1">Unlock</button>
+          </div>
+        </div>
+        <div class="pin-area" id="ridgeKeyEditArea">
+          <input type="text" class="key-input" id="ridgeKeyInput" placeholder="Mistral API key…" autocomplete="off" spellcheck="false">
+          <div style="display:flex;gap:7px">
+            <button class="btn btn-secondary btn-sm" id="ridgeKeyCancelBtn" style="flex:1">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="ridgeKeySaveBtn" style="flex:1">Save Key</button>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="ridgeChangeKeyBtn" style="width:100%">Change API Key</button>
+      </div>
+
+      <div class="api-row">
+        <div class="api-row-label">Element Selectors</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">CAPTCHA Image</div>
+            <input type="text" id="ridgeCaptchaSel" class="key-input" value="#writercaptcha > div:nth-child(2) > img:nth-child(1)">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Answer Input</div>
+            <input type="text" id="ridgeInputSel" class="key-input" value="input[required]">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Submit Button</div>
+            <input type="text" id="ridgeSubmitSel" class="key-input" value='input[type="submit"].btn.btn-success.btn-large'>
+          </div>
+        </div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header"><span class="slider-label">Submit Delay</span><span class="slider-val" id="ridgeDelayVal">3s</span></div>
+        <div class="slider-desc">Wait before submitting the solved answer</div>
+        <input type="range" id="ridgeDelay" min="0" max="30" step="0.5" value="3">
+        <div class="preset-row">
+          <button class="preset-btn" data-group="ridgeDelay" data-val="0">0s</button>
+          <button class="preset-btn active" data-group="ridgeDelay" data-val="3">3s</button>
+          <button class="preset-btn" data-group="ridgeDelay" data-val="5">5s</button>
+          <button class="preset-btn" data-group="ridgeDelay" data-val="10">10s</button>
+        </div>
+      </div>
+
+      <div class="quick-row">
+        <button class="btn btn-green btn-sm" id="ridgeStartBtn">Start Autosolve</button>
+        <button class="btn btn-secondary btn-sm" id="ridgeSaveBtn">Save Selectors</button>
+      </div>
+      <div class="info-row" id="ridgeStatusRow">
+        <span class="info-dot dot-grey" id="ridgeDot"></span>
+        <span id="ridgeStatusText">Autosolve inactive</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer ───────────────────────────────────────────────────── -->
+  <div class="footer-actions">
+    <button class="btn btn-primary" id="saveBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save Settings</button>
+    <button class="btn btn-danger" id="stopAllBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>Stop Alarms</button>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+<audio id="alertAudio" src="beep.wav" preload="auto"></audio>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>

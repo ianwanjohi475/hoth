@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Inkwell — Spintax Error Detected</title>
+  <style>
+    *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+    :root{
+      --bg:#0F172A; --surface:#1E293B; --border:#334155;
+      --text:#F1F5F9; --muted:#94A3B8;
+      --teal:#14B8A6; --teal-hi:#2DD4BF;
+      --red:#FB7185; --red-lo:#E11D48;
+    }
+    html,body{ height:100%; }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;
+      color:var(--text); min-height:100vh;
+      display:flex; align-items:center; justify-content:center;
+      background:var(--bg); overflow:hidden; position:relative;
+      -webkit-font-smoothing:antialiased;
+    }
+    body::before{
+      content:''; position:absolute; inset:0;
+      background:
+        radial-gradient(ellipse 60% 50% at 25% 25%, rgba(251,113,133,0.18), transparent 60%),
+        radial-gradient(ellipse 50% 40% at 80% 75%, rgba(20,184,166,0.12), transparent 60%);
+      animation:bgPulse 2.2s ease-in-out infinite alternate; pointer-events:none;
+    }
+    @keyframes bgPulse{ from{opacity:.55} to{opacity:1} }
+    .panel{
+      position:relative; z-index:1; width:100%; max-width:540px; margin:24px;
+      padding:36px 40px 32px;
+      background:linear-gradient(180deg,var(--surface),var(--bg));
+      border:1px solid var(--border); border-radius:24px;
+      box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(251,113,133,.25),0 0 80px rgba(251,113,133,.28);
+      animation:glow 2.2s ease-in-out infinite alternate;
+    }
+    @keyframes glow{
+      from{box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(251,113,133,.25),0 0 80px rgba(251,113,133,.25)}
+      to{box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(251,113,133,.55),0 0 140px rgba(251,113,133,.5)}
+    }
+    .eyebrow{ display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+    .eyebrow-dot{ width:8px; height:8px; border-radius:50%; background:var(--red); box-shadow:0 0 10px var(--red); animation:dot 1.2s ease-in-out infinite; }
+    @keyframes dot{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.4)} }
+    .eyebrow-label{ font-size:11px; font-weight:700; color:var(--red); letter-spacing:.18em; text-transform:uppercase; }
+    .eyebrow-brand{ margin-left:auto; display:inline-flex; align-items:center; gap:7px; font-size:11px; color:var(--muted); font-weight:600; letter-spacing:.04em; }
+    .brand-pip{ width:16px; height:16px; border-radius:5px; background:linear-gradient(135deg,var(--teal-hi),var(--teal)); }
+    .headline{ display:flex; align-items:flex-start; gap:16px; margin-bottom:14px; }
+    .headline-icon{
+      width:52px; height:52px; flex-shrink:0; border-radius:14px;
+      background:linear-gradient(135deg,#FDA4AF,var(--red-lo)); color:#fff;
+      display:flex; align-items:center; justify-content:center;
+      box-shadow:0 8px 24px rgba(251,113,133,.45);
+    }
+    .headline-icon svg{ width:26px; height:26px; }
+    .headline-title{ font-size:26px; font-weight:700; letter-spacing:-.025em; line-height:1.15; padding-top:4px; }
+    .headline-sub{ font-size:14px; color:var(--muted); line-height:1.55; margin-top:8px; max-width:38ch; }
+    .timer-card{ margin-top:26px; padding:20px 22px; background:var(--bg); border:1px solid var(--border); border-radius:14px; display:flex; align-items:center; gap:16px; }
+    .timer-meta{ flex:1; display:flex; flex-direction:column; gap:4px; }
+    .timer-label{ font-size:10.5px; font-weight:600; color:var(--muted); letter-spacing:.14em; text-transform:uppercase; }
+    .timer-value{ font-family:"JetBrains Mono","SF Mono",Menlo,monospace; font-size:40px; font-weight:600; color:var(--red); font-variant-numeric:tabular-nums; letter-spacing:-.03em; line-height:1; }
+    .timer-ring svg{ transform:rotate(-90deg); }
+    .stop-btn{
+      width:100%; margin-top:20px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+      padding:14px 20px; font-family:inherit; font-size:13.5px; font-weight:700; letter-spacing:-.005em;
+      border:none; border-radius:12px; cursor:pointer; color:#4C0519;
+      background:linear-gradient(180deg,#FDA4AF,var(--red));
+      box-shadow:0 8px 24px rgba(251,113,133,.45),inset 0 1px 0 rgba(255,255,255,.25);
+      transition:transform .15s cubic-bezier(.22,.61,.36,1),box-shadow .15s;
+    }
+    .stop-btn svg{ width:16px; height:16px; }
+    .stop-btn:hover{ transform:translateY(-1px); }
+    .stop-btn.stopped{ background:var(--surface); color:var(--muted); box-shadow:none; cursor:default; }
+    .foot{ margin-top:20px; padding-top:16px; border-top:1px solid var(--border); display:flex; justify-content:space-between; font-size:11px; color:var(--muted); font-family:"JetBrains Mono","SF Mono",Menlo,monospace; }
+    .foot .v{ color:var(--teal-hi); }
+  </style>
+</head>
+<body>
+  <audio id="alarm" src="beep.wav" autoplay loop></audio>
+  <div class="panel" id="panel" role="alertdialog">
+    <div class="eyebrow">
+      <span class="eyebrow-dot"></span>
+      <span class="eyebrow-label">Critical Alert · Spintax</span>
+      <span class="eyebrow-brand"><span class="brand-pip"></span>Inkwell</span>
+    </div>
+    <div class="headline">
+      <div class="headline-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <div>
+        <div class="headline-title">Spintax error detected</div>
+        <div class="headline-sub">The article tab has been closed automatically. The client requested spintax variation — review the brief before resubmitting.</div>
+      </div>
+    </div>
+    <div class="timer-card">
+      <div class="timer-meta">
+        <span class="timer-label">Alarm time remaining</span>
+        <span class="timer-value" id="countdown">30:00</span>
+      </div>
+      <div class="timer-ring">
+        <svg width="56" height="56" viewBox="0 0 56 56">
+          <circle cx="28" cy="28" r="24" fill="none" stroke="#334155" stroke-width="3"/>
+          <circle id="ring" cx="28" cy="28" r="24" fill="none" stroke="#FB7185" stroke-width="3" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="0"/>
+        </svg>
+      </div>
+    </div>
+    <button class="stop-btn" id="stopBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+      <span>Stop Alarm</span>
+    </button>
+    <div class="foot">
+      <span>Detected <span class="v" id="timestamp">—</span></span>
+      <span class="v">INKWELL v1.0</span>
+    </div>
+  </div>
+  <script>
+    const TOTAL=30*60, CIRC=2*Math.PI*24;
+    let remaining=TOTAL, ticker=null, stopped=false;
+    const alarm=document.getElementById('alarm');
+    const countdownEl=document.getElementById('countdown');
+    const ring=document.getElementById('ring');
+    const stopBtn=document.getElementById('stopBtn');
+    document.getElementById('timestamp').textContent=new Date().toLocaleTimeString();
+    const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+    function upd(){ ring.setAttribute('stroke-dashoffset',(CIRC*(1-remaining/TOTAL)).toString()); }
+    upd();
+    function stopAlarm(){
+      if(stopped)return; stopped=true;
+      alarm.pause(); alarm.currentTime=0; clearInterval(ticker);
+      countdownEl.textContent='00:00';
+      document.body.style.animation='none'; document.querySelector('.panel').style.animation='none';
+      document.querySelector('.eyebrow-dot').style.animation='none';
+      stopBtn.classList.add('stopped'); stopBtn.querySelector('span').textContent='Alarm Stopped'; stopBtn.disabled=true;
+    }
+    ticker=setInterval(()=>{ remaining--; countdownEl.textContent=fmt(Math.max(remaining,0)); upd(); if(remaining<=0)stopAlarm(); },1000);
+    stopBtn.addEventListener('click',()=>{ stopAlarm(); try{chrome.runtime.sendMessage({type:'STOP_ALARM'});}catch(_){} });
+    window.addEventListener('beforeunload',stopAlarm);
+  </script>
+</body>
+</html>
