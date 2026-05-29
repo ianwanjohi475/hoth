@@ -157,103 +157,124 @@ chrome.debugger.onDetach.addListener(source => debuggedTabs.delete(source.tabId)
 //  All calls run in parallel, so total wall time ≈ slowest single call.
 // ============================================================================
 
-const OCR_DISAMBIGUATION = `Be especially careful with case-ambiguous and shape-ambiguous characters:
+const STRICT_FORMAT_RULES = `═══ RESPONSE FORMAT RULES — READ CAREFULLY ═══
+Your ENTIRE response must be ONLY this format, nothing else:
+<ans>X</ans>
+(where X is your answer)
+
+ABSOLUTELY FORBIDDEN:
+✗ "Examining the captcha…"
+✗ "Looking at the image…"
+✗ "I see / I can see…"
+✗ "The captcha contains / shows…"
+✗ "The characters are…"
+✗ "Analyzing…"
+✗ Any explanation, reasoning, or commentary
+✗ Any text before or after the <ans></ans> tags
+
+CORRECT EXAMPLES:
+✓ <ans>jJ12U</ans>
+✓ <ans>aB5cD</ans>
+✓ <ans>ID7uW</ans>
+
+WRONG EXAMPLES (do NOT do these):
+✗ Examining the captcha, the answer is jJ12U
+✗ <ans>jJ12U</ans> — the J is uppercase
+✗ The image shows jJ12U so <ans>jJ12U</ans>
+✗ jJ12U
+
+If unsure about a single character, use ? in place of it (e.g. <ans>aB?dE</ans>).
+═══════════════════════════════════════════════`;
+
+const OCR_DISAMBIGUATION = `Disambiguate carefully:
 - 0 (zero) vs O (uppercase oh) vs o (lowercase oh)
 - 1 (one) vs l (lowercase L) vs I (uppercase i)
-- 5 vs S vs s
-- 9 vs g vs q
-- 6 vs G vs b
-- 2 vs Z vs z
-- Same-shape pairs: C/c, K/k, M/m, P/p, S/s, U/u, V/v, W/w, X/x, Y/y, Z/z — these letters look similar in upper and lower case; judge by relative SIZE/HEIGHT compared to neighbouring tall letters.`;
+- 5 vs S vs s, 9 vs g vs q, 6 vs G vs b, 2 vs Z vs z
+- Same-shape pairs (C/c, K/k, M/m, P/p, S/s, U/u, V/v, W/w, X/x, Y/y, Z/z): judge by relative HEIGHT against neighbouring tall letters.`;
 
 const COLOUR_AND_COUNT = (L) =>
-  `IMPORTANT — colour and count discipline:
-- This CAPTCHA may have characters in DIFFERENT COLOURS (red, green, blue, yellow, purple, orange, etc.) on a light background. The colour is decoration — read the CHARACTER each colour represents.
-- Each coloured shape is one character.
-- Count carefully. There MUST be exactly ${L} characters.
-- THIN characters (lowercase i, l, I, 1, .) are easy to miss — if your count is less than ${L}, look again at the start, end, and gaps between letters for a thin/faint character you skipped.
-- Do NOT skip any character even if it is faint, thin, or a colour that blends with the background.
-- IGNORE noise overlays: wavy lines, strikethrough strokes, coloured streaks, dots, and squiggles that cross through or around the letters are DECORATION, not characters. Only solid, closed letter/digit shapes count.`;
+  `Image content:
+- The CAPTCHA has EXACTLY ${L} characters: uppercase A-Z, lowercase a-z, or digit 0-9
+- Characters may be DIFFERENT COLOURS (red, green, blue, yellow, purple) — colour is DECORATION, read the character shape
+- Wavy lines, strikethrough strokes, dots, squiggles = DECORATION, IGNORE them
+- Thin characters (i, l, I, 1) at the start or end are easy to miss — count to ${L} carefully
+- PRESERVE CASE EXACTLY: capital letters stay capital, lowercase letters stay lowercase`;
 
 function ocrPrompts(L) {
   return [
-    // (1) Strict format with full disambiguation
-    `You are a precise CAPTCHA OCR system. The image contains EXACTLY ${L} characters.
+    `${STRICT_FORMAT_RULES}
+
+TASK: Read the ${L}-character CAPTCHA in this image.
 
 ${COLOUR_AND_COUNT(L)}
 
-Rules:
-- Each character is uppercase A-Z, lowercase a-z, or digit 0-9
-- PRESERVE CASE EXACTLY — uppercase MUST remain uppercase, lowercase MUST remain lowercase
-- Read left to right
-- Ignore noise, lines, dots, and background patterns
-
 ${OCR_DISAMBIGUATION}
 
-Output ONLY this exact format, nothing else:
-<ans>RESULT</ans>`,
+Respond now (tags only, no other text):`,
 
-    // (2) Chain-of-thought with explicit count step
-    `Examine this CAPTCHA image carefully. It contains EXACTLY ${L} characters in a row.
+    `${STRICT_FORMAT_RULES}
 
-Step 1: COUNT the coloured shapes left to right. There must be ${L}. If you counted fewer, look again — you missed a thin character (i, l, I, 1, .).
-Step 2: Identify each character. Some may be coloured (red, green, blue, etc.) — the colour is irrelevant, only the character shape matters.
-Step 3: For each one, decide: uppercase letter, lowercase letter, or digit. Compare against the heights of neighbouring letters.
-Step 4: Combine into a final string of EXACTLY ${L} characters, preserving the EXACT case.
+TASK: Transcribe the ${L} characters from this CAPTCHA exactly as drawn.
 
-Output only the final answer between <ans> and </ans> tags. The string MUST be ${L} characters long.`,
-
-    // (3) Concise + structured + count emphasis
-    `OCR this ${L}-character multi-coloured CAPTCHA. Case-sensitive [a-zA-Z0-9].
-
-Output exactly ${L} characters. Do NOT skip thin or faint coloured characters.
-
-${OCR_DISAMBIGUATION}
-
-Reply only: <ans>RESULT</ans>`,
-
-    // (4) Direct, case + colour focus
-    `Read the ${L} characters in this CAPTCHA. Each character may be a DIFFERENT COLOUR (red, green, blue, yellow, etc.) — the colours are decorative, focus on character shape.
-
-The CAPTCHA mixes uppercase letters, lowercase letters, and digits — copy the case EXACTLY as drawn.
-
-Pay attention to which letters are tall (capitals, ascenders like b/d/h/k/l) vs which are short (a, c, e, m, n, o, r, s, u, v, w, x, z). Lowercase letters that look like capitals are usually shorter.
-
-There are EXACTLY ${L} characters. Do not skip thin or faint ones at the start or end.
-
-Output: <ans>YOUR_ANSWER</ans>`,
-
-    // (5) Final-answer focus, count-first
-    `This is a multi-coloured CAPTCHA with EXACTLY ${L} alphanumeric characters.
+Step 1 (internal, do not write): Count the coloured shapes. There must be ${L}.
+Step 2 (internal, do not write): Identify each character, decide case.
+Step 3 (write this as your ENTIRE response): <ans>your_answer_here</ans>
 
 ${COLOUR_AND_COUNT(L)}
 
-Carefully transcribe each one, paying close attention to:
-1. Total count = ${L} (recount if your draft is shorter)
-2. Case of letters (capital vs small)
-3. Distinguishing similar shapes (0/O, 1/l/I, 5/S, etc.)
-4. Reading order (left to right)
+Respond:`,
+
+    `${STRICT_FORMAT_RULES}
+
+TASK: OCR this ${L}-character CAPTCHA. Case-sensitive [a-zA-Z0-9].
 
 ${OCR_DISAMBIGUATION}
 
-Reply with only: <ans>ANSWER</ans>  (must be exactly ${L} characters)`,
+Respond:`,
+
+    `${STRICT_FORMAT_RULES}
+
+TASK: Identify the ${L} characters in this CAPTCHA preserving exact case.
+
+${COLOUR_AND_COUNT(L)}
+
+${OCR_DISAMBIGUATION}
+
+Respond (tags only):`,
+
+    `${STRICT_FORMAT_RULES}
+
+TASK: ${L}-character alphanumeric CAPTCHA. Each character is uppercase A-Z, lowercase a-z, or digit 0-9.
+
+${COLOUR_AND_COUNT(L)}
+
+${OCR_DISAMBIGUATION}
+
+Final answer (tags only, no commentary):`,
   ];
 }
 
-// Extract the answer string from a model response. Tries <ans> tags first,
-// then falls back to any contiguous alphanumeric block of expected length.
+// STRICT extraction: only accept responses with explicit <ans>…</ans> tags.
+//
+// The previous loose version had a greedy fallback ("if no tags, take the
+// first 5 alphanumeric chars") which produced 'Exami' out of 'Examining
+// the captcha…' whenever the model added commentary instead of just the
+// answer. Rejecting un-tagged responses costs us those samples but keeps
+// the vote clean — better to vote on fewer good samples than a mix of
+// good samples and parser garbage.
 function extractAnswer(raw, expectedLen) {
   if (!raw) return '';
-  // Prefer explicit <ans>...</ans> markers
   const m = raw.match(/<ans>\s*([^<]*?)\s*<\/ans>/i);
-  let candidate = m ? m[1] : raw;
-  candidate = candidate.replace(/[^a-zA-Z0-9]/g, '');
-  // If the model rambled, grab the first contiguous expectedLen-character block
-  if (candidate.length > expectedLen + 2) {
-    const lenMatch = raw.replace(/<\/?ans>/gi, '').match(new RegExp(`[a-zA-Z0-9]{${expectedLen}}`));
-    if (lenMatch) candidate = lenMatch[0];
+  if (!m) {
+    console.warn('[Quillforge OCR] response missing <ans> tags:', raw.slice(0, 100));
+    return '';
   }
-  return candidate;
+  // Keep '?' as a valid sentinel — model uses it for "unsure on this position"
+  const cleaned = m[1].replace(/[^a-zA-Z0-9?]/g, '');
+  // Sanity bounds: empty, all-unsure, or wildly long → reject the sample
+  if (!cleaned.length || cleaned.length > expectedLen + 4) return '';
+  if (/^\?+$/.test(cleaned)) return '';
+  return cleaned;
 }
 
 function withTimeout(promise, ms, label = 'OCR call') {
@@ -316,26 +337,56 @@ async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts
 // the captcha. Same model (Mistral Pixtral), much smaller problem space:
 // no counting, no spatial multi-attention, just "what is this glyph?".
 function singleCharPrompt() {
-  return `This image is ONE character cropped from a CAPTCHA. The character is uppercase A-Z, lowercase a-z, or a digit 0-9.
+  return `═══ RESPONSE FORMAT — READ CAREFULLY ═══
+Your ENTIRE response must be ONLY: <ans>X</ans>
+(where X is exactly one character)
 
-Identify the main character in the centre of the image.
+ABSOLUTELY FORBIDDEN:
+✗ "Examining the character…"
+✗ "Looking at the image…"
+✗ "I see / I can see…"
+✗ "The character appears to be…"
+✗ "It looks like…"
+✗ Any explanation or commentary
+✗ Any text before or after the <ans></ans> tags
 
-Rules:
-- PRESERVE CASE EXACTLY. Uppercase letters stay uppercase, lowercase letters stay lowercase.
-- The image may include slivers of neighbouring characters at the edges — focus on the CENTRAL character only.
-- IGNORE wavy lines, strikethrough strokes, dots, and coloured streaks — these are decoration.
-- Distinguish: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b, 2/Z/z. Compare relative height (capitals are tall, lowercase letters are short).
+CORRECT EXAMPLES:
+✓ <ans>A</ans>
+✓ <ans>g</ans>
+✓ <ans>7</ans>
+✓ <ans>?</ans>     (only if you are unsure)
 
-Output ONLY: <ans>X</ans>  (where X is the single character)`;
+WRONG EXAMPLES (do NOT do these):
+✗ Examining the character, it appears to be <ans>A</ans>
+✗ The character is A
+✗ <ans>A</ans> (lowercase)
+═══════════════════════════════════════════════
+
+TASK: This image is ONE character cropped from a CAPTCHA. Identify the MAIN character in the CENTRE.
+
+- Character is uppercase A-Z, lowercase a-z, or digit 0-9
+- PRESERVE CASE EXACTLY (capital stays capital, lowercase stays lowercase)
+- Slivers of neighbouring characters may appear at the edges — IGNORE them, focus on the centre
+- Wavy lines, strikethrough strokes, dots, coloured streaks = DECORATION, IGNORE them
+- Distinguish carefully: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b, 2/Z/z (compare relative height — capitals are tall, lowercase are short)
+
+If you cannot identify the character with confidence, respond with: <ans>?</ans>
+
+Respond now (tags only):`;
 }
 
+// STRICT: only accept <ans>X</ans> where X is one alphanumeric character
+// (or '?' for "unsure"). No greedy fallback — a response of
+// "Examining the character, it appears to be A" would otherwise yield 'E'.
 function extractSingleChar(raw) {
   if (!raw) return '';
-  const m = raw.match(/<ans>\s*([a-zA-Z0-9])\s*<\/ans>/);
-  if (m) return m[1];
-  // Fallback: first alphanumeric character in the response
-  const fb = raw.match(/[a-zA-Z0-9]/);
-  return fb ? fb[0] : '';
+  const m = raw.match(/<ans>\s*([a-zA-Z0-9?])\s*<\/ans>/);
+  if (!m) {
+    console.warn('[Quillforge OCR] per-char response missing <ans> tag:', raw.slice(0, 60));
+    return '';
+  }
+  if (m[1] === '?') return '';   // model said unsure → no vote
+  return m[1];
 }
 
 // Per-position majority vote across samples. When ties occur we prefer the
@@ -433,25 +484,26 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
   // For each character position, gather votes from:
   //   1. Every full-image sample's character at that position
   //   2. The per-character segment OCR for that position
-  // Segment OCR effectively gets equal weight to one full-image pass —
-  // since it's high-confidence single-char OCR, this is appropriate.
+  // '?' chars (model said "unsure") are filtered out of votes — they're
+  // explicit non-votes.
   let voted = '';
   const breakdown = [];
   for (let i = 0; i < expectedLength; i++) {
     const fromFull = fullSamples
       .map(s => (s.text.length === expectedLength ? s.text[i] : null))
-      .filter(Boolean);
+      .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
     const fromChar = charSamples
       .filter(s => s.position === i)
-      .map(s => s.text);
+      .map(s => s.text)
+      .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
 
     const allVotes = [...fromFull, ...fromChar];
     if (!allVotes.length) {
-      // No vote for this position — fall back to whatever full-image samples
-      // had at the position (even if length mismatches), else '?'.
+      // No vote for this position — try loose full-image positions (even
+      // for length-mismatched samples), else mark '?'.
       const loose = fullSamples
         .map(s => s.text[i])
-        .filter(c => c && /[a-zA-Z0-9]/.test(c));
+        .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
       voted += loose.length ? mostFrequent(loose) : '?';
       breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: voted[i], note: 'fallback' });
       continue;

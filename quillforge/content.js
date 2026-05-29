@@ -1063,8 +1063,20 @@ window.__qfTokens = { QF, ICON };
         console.warn('[Quillforge Ridge] Length mismatch', { ocr: result, got: result.length, need: captchaLength });
         setStatus(`Short read · ${result.length}/${captchaLength} chars · refreshing`, 'warn');
         lastSolvedFingerprint = fp;
-        // Mark this fingerprint so we don't immediately re-solve while the
-        // new image loads.
+        lastSubmitFingerprint = fp;
+        refreshCaptcha();
+        scheduleNext(2500);
+        return;
+      }
+
+      // ── Suspicious-answer gate ──
+      // Defence-in-depth against the parser-bug residue: if the voted
+      // answer starts with an English-prefix word (Exami, Looki, Analy,
+      // Captc, etc.), it's almost certainly leakage from model commentary
+      // rather than a real captcha read. Refresh instead of submitting.
+      if (isSuspiciousAnswer(result)) {
+        console.warn('[Quillforge Ridge] Suspicious answer rejected:', result);
+        setStatus(`Rejected "${result}" · refreshing`, 'warn');
         lastSubmitFingerprint = fp;
         refreshCaptcha();
         scheduleNext(2500);
@@ -1337,17 +1349,65 @@ window.__qfTokens = { QF, ICON };
   // full-image vote can't decide.
   // ─────────────────────────────────────────────────────────────────────────
 
-  function segmentCharacters(imgEl, count, upscale = 5, overlap = 0.20) {
+  // Find the horizontal range that actually contains character pixels.
+  // HOTH captchas have white margins on each side — slicing the FULL image
+  // width into N pieces puts the cuts off-centre. We detect the leftmost
+  // and rightmost column with enough non-white content to qualify as a
+  // glyph (filtering out the thin wavy decorative lines), then slice
+  // within that span instead. Significantly improves per-character OCR.
+  function findContentSpan(imgEl) {
     try {
       const w = imgEl.naturalWidth  || imgEl.width  || 200;
       const h = imgEl.naturalHeight || imgEl.height || 60;
-      const charW = w / count;
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(imgEl, 0, 0);
+      const id = ctx.getImageData(0, 0, w, h);
+      const d  = id.data;
+
+      const density = new Int32Array(w);
+      for (let x = 0; x < w; x++) {
+        let count = 0;
+        for (let y = 0; y < h; y++) {
+          const i = (y * w + x) * 4;
+          // Treat anything noticeably non-white as content
+          const minCh = Math.min(d[i], d[i + 1], d[i + 2]);
+          if (minCh < 200) count++;
+        }
+        density[x] = count;
+      }
+      // Threshold: a column must have ≥10% of its height as content. Filters
+      // out thin wavy lines that have only a few pixels per column.
+      const threshold = Math.max(2, Math.floor(h * 0.10));
+      let left = 0, right = w - 1;
+      while (left < w && density[left] < threshold) left++;
+      while (right >= 0 && density[right] < threshold) right--;
+
+      // Safety: if span looks wrong (too narrow, inverted) fall back to full width
+      if (right - left < w * 0.30) return { left: 0, right: w - 1 };
+      return { left, right };
+    } catch (_) {
+      return { left: 0, right: (imgEl.naturalWidth || imgEl.width || 200) - 1 };
+    }
+  }
+
+  function segmentCharacters(imgEl, count, upscale = 5, overlap = 0.22) {
+    try {
+      const fullW = imgEl.naturalWidth  || imgEl.width  || 200;
+      const h     = imgEl.naturalHeight || imgEl.height || 60;
+      // Slice within the actual content span — skips the white margins
+      // so each slice lands centred on its character.
+      const { left, right } = findContentSpan(imgEl);
+      const spanW   = (right - left + 1);
+      const charW   = spanW / count;
       const padding = charW * overlap;
 
       const segments = [];
       for (let i = 0; i < count; i++) {
-        const x0 = Math.max(0, i * charW - padding);
-        const x1 = Math.min(w, (i + 1) * charW + padding);
+        const x0 = Math.max(0,     left + i * charW - padding);
+        const x1 = Math.min(fullW, left + (i + 1) * charW + padding);
         const segW = x1 - x0;
         if (segW <= 0) { segments.push(null); continue; }
 
@@ -1364,6 +1424,23 @@ window.__qfTokens = { QF, ICON };
       console.warn('[Quillforge Ridge] segmentation failed:', e.message);
       return [];
     }
+  }
+
+  // Safety net: catches parser-bug residue like "Exami" from "Examining…"
+  // or "Looki" from "Looking at the captcha…". With strict extraction in
+  // background.js these should never reach here, but this is a belt-and-
+  // braces guard so the script will REFRESH instead of submitting any
+  // English-prefix word that slipped through.
+  const SUSPICIOUS_ANSWER_PATTERNS = [
+    /^Exami/i, /^Examp/i, /^Looki/i, /^Analy/i, /^Check/i,
+    /^Image/i, /^Captc/i, /^Chara/i, /^Reads/i, /^Texto/i,
+    /^Numbe/i, /^Lette/i, /^Visib/i, /^Trans/i, /^Ident/i,
+    /^Recog/i, /^Apper/i, /^Appea/i, /^Begin/i, /^First/i,
+    /^After/i, /^Here/i,  /^Note/i,
+  ];
+  function isSuspiciousAnswer(text) {
+    if (!text) return false;
+    return SUSPICIOUS_ANSWER_PATTERNS.some(re => re.test(text));
   }
 
   async function preprocessVariants(imgEl) {
