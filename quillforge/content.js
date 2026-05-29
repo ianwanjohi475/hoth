@@ -1026,13 +1026,19 @@ window.__qfTokens = { QF, ICON };
       const variants = await preprocessVariants(imgEl);
       if (!variants.length) throw new Error('Could not extract CAPTCHA image');
 
-      setStatus(`Solving · ${ocrPasses}-pass ensemble…`, 'info');
+      // Per-character segments — single-glyph crops the model OCRs
+      // independently. Adds L extra calls but gives one strong, focused
+      // vote per character position to break ties in the full-image vote.
+      const segments = segmentCharacters(imgEl, captchaLength);
+
+      setStatus(`Solving · ${ocrPasses} full + ${segments.length} per-char passes…`, 'info');
 
       const result = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
             type:           'SOLVE_CAPTCHA',
             imageVariants:  variants,
+            segmentedChars: segments,
             apiKey:         ridgeApiKey,
             expectedLength: captchaLength,
             passes:         ocrPasses,
@@ -1315,6 +1321,49 @@ window.__qfTokens = { QF, ICON };
       ctx.putImageData(id, 0, 0);
       return canvas.toDataURL('image/png');
     } catch (_) { return null; }
+  }
+
+  // ─── Per-character segmentation ──────────────────────────────────────────
+  //
+  // Crops the captcha image into N character-shaped slices. Equal-width
+  // splits with ~20% overlap padding on each side so the model sees the
+  // full glyph even if our cut lands slightly off-centre. Each segment
+  // is upscaled 5× crisp so the single character fills the frame.
+  //
+  // Why this helps so much: single-character OCR is a fundamentally easier
+  // problem than full-string OCR. The model doesn't have to count, doesn't
+  // have to spatially attend to N glyphs at once, and the attention budget
+  // per character is much larger. Per-char passes break ties whenever the
+  // full-image vote can't decide.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function segmentCharacters(imgEl, count, upscale = 5, overlap = 0.20) {
+    try {
+      const w = imgEl.naturalWidth  || imgEl.width  || 200;
+      const h = imgEl.naturalHeight || imgEl.height || 60;
+      const charW = w / count;
+      const padding = charW * overlap;
+
+      const segments = [];
+      for (let i = 0; i < count; i++) {
+        const x0 = Math.max(0, i * charW - padding);
+        const x1 = Math.min(w, (i + 1) * charW + padding);
+        const segW = x1 - x0;
+        if (segW <= 0) { segments.push(null); continue; }
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(segW * upscale);
+        canvas.height = Math.round(h    * upscale);
+        const ctx = canvas.getContext('2d', { willReadFrequently: false });
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(imgEl, x0, 0, segW, h, 0, 0, canvas.width, canvas.height);
+        segments.push(canvas.toDataURL('image/png'));
+      }
+      return segments.filter(Boolean);
+    } catch (e) {
+      console.warn('[Quillforge Ridge] segmentation failed:', e.message);
+      return [];
+    }
   }
 
   async function preprocessVariants(imgEl) {

@@ -265,11 +265,6 @@ function withTimeout(promise, ms, label = 'OCR call') {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Groq's current multimodal model. If the user's Groq plan doesn't include
-// it, the call will fail and the ensemble falls back to Mistral-only — the
-// solver keeps working, just with one fewer model in the vote.
-const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
-
 async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
@@ -317,50 +312,30 @@ async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts
   throw lastErr || new Error('Mistral call failed');
 }
 
-async function callGroqVisionOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
-  let lastErr = null;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: GROQ_VISION_MODEL,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: imageBase64 } },
-              { type: 'text', text: prompt },
-            ],
-          }],
-          max_tokens:  120,
-          temperature: temperature,
-          top_p:       0.1,
-        }),
-      });
+// Single-character OCR prompt — used on individual segments cropped from
+// the captcha. Same model (Mistral Pixtral), much smaller problem space:
+// no counting, no spatial multi-attention, just "what is this glyph?".
+function singleCharPrompt() {
+  return `This image is ONE character cropped from a CAPTCHA. The character is uppercase A-Z, lowercase a-z, or a digit 0-9.
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err?.error?.message || `Groq ${res.status}`;
-        if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
-          await sleep(400 + Math.random() * 400);
-          lastErr = new Error(msg);
-          continue;
-        }
-        throw new Error(msg);
-      }
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content?.trim() || '';
-    } catch (e) {
-      lastErr = e;
-      if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
-        await sleep(400);
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw lastErr || new Error('Groq call failed');
+Identify the main character in the centre of the image.
+
+Rules:
+- PRESERVE CASE EXACTLY. Uppercase letters stay uppercase, lowercase letters stay lowercase.
+- The image may include slivers of neighbouring characters at the edges — focus on the CENTRAL character only.
+- IGNORE wavy lines, strikethrough strokes, dots, and coloured streaks — these are decoration.
+- Distinguish: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b, 2/Z/z. Compare relative height (capitals are tall, lowercase letters are short).
+
+Output ONLY: <ans>X</ans>  (where X is the single character)`;
+}
+
+function extractSingleChar(raw) {
+  if (!raw) return '';
+  const m = raw.match(/<ans>\s*([a-zA-Z0-9])\s*<\/ans>/);
+  if (m) return m[1];
+  // Fallback: first alphanumeric character in the response
+  const fb = raw.match(/[a-zA-Z0-9]/);
+  return fb ? fb[0] : '';
 }
 
 // Per-position majority vote across samples. When ties occur we prefer the
@@ -387,76 +362,129 @@ function voteCharacters(samples, expectedLen) {
   return result;
 }
 
-async function solveCaptchaEnsemble({ imageVariants, apiKey, expectedLength = 5, passes = 5 }) {
+async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, expectedLength = 5, passes = 5 }) {
   const mistralKey = apiKey || RIDGE_DEFAULT_KEY;
-
-  // Cross-model OCR uses the Groq key the user already configured for the
-  // article writer. Falls back to the default Groq key if none is set yet.
-  const groqKey = await new Promise((resolve) => {
-    chrome.storage.sync.get(['groqApiKey'], d => resolve(d.groqApiKey || DEFAULT_GROQ_KEY));
-  });
-
-  const variants = Array.isArray(imageVariants) ? imageVariants.filter(Boolean) : [];
+  const variants   = Array.isArray(imageVariants)  ? imageVariants.filter(Boolean)  : [];
+  const segments   = Array.isArray(segmentedChars) ? segmentedChars.filter(Boolean) : [];
   if (!variants.length) throw new Error('No image variants provided');
 
   const prompts = ocrPrompts(expectedLength);
+  const charPrompt = singleCharPrompt();
 
-  // Build the task list — round-robin across (variant, prompt).
-  // Provider split: ~75 % Mistral Pixtral (proven), ~25 % Groq Llama-4 Scout
-  // (cross-model diversity). Same-model errors correlate; different-model
-  // errors don't, which is what actually makes the vote effective.
-  const groqPasses = groqKey ? (passes >= 6 ? 2 : 1) : 0;
-  const tasks = [];
+  // ── Full-image tasks ──
+  // The existing N-pass Mistral ensemble. Each pass sees a different
+  // (image variant × prompt) combo. Mostly temperature 0 with a couple
+  // of 0.25 calls for diversity.
+  const fullTasks = [];
   for (let i = 0; i < passes; i++) {
-    const useGroq = groqPasses > 0 && i >= (passes - groqPasses);
-    tasks.push({
-      variant:     variants[i % variants.length],
+    fullTasks.push({
+      kind:        'full',
+      image:       variants[i % variants.length],
       prompt:      prompts[i % prompts.length],
       temperature: i < Math.ceil(passes * 0.6) ? 0 : 0.25,
-      provider:    useGroq ? 'groq' : 'mistral',
     });
   }
 
-  // Stagger requests by 80 ms each so we don't burst the rate limiter
+  // ── Per-character tasks ──
+  // One Mistral call per character segment. Each segment is a single-
+  // character image (slightly padded so the model sees the full glyph
+  // even if segmentation lands slightly off). Single-char OCR is far
+  // more reliable than full-string OCR — the model only has to identify
+  // ONE glyph in isolation, no counting, sharper attention.
+  const charTasks = segments.slice(0, expectedLength).map((seg, idx) => ({
+    kind:        'char',
+    position:    idx,
+    image:       seg,
+    prompt:      charPrompt,
+    temperature: 0,
+  }));
+
+  // ── Run everything in parallel with stagger ──
+  // 80 ms apart so we don't burst the Mistral rate limiter.
+  const allTasks = [...fullTasks, ...charTasks];
   const settled = await Promise.allSettled(
-    tasks.map((t, idx) => {
+    allTasks.map((t, idx) => {
       const fn = async () => {
         if (idx > 0) await sleep(idx * 80);
-        const raw = t.provider === 'groq'
-          ? await callGroqVisionOCR(t.variant, t.prompt, t.temperature, groqKey)
-          : await callMistralOCR(t.variant, t.prompt, t.temperature, mistralKey);
-        return { provider: t.provider, raw, text: extractAnswer(raw, expectedLength) };
+        const raw = await callMistralOCR(t.image, t.prompt, t.temperature, mistralKey);
+        if (t.kind === 'full') {
+          return { ...t, raw, text: extractAnswer(raw, expectedLength) };
+        } else {
+          return { ...t, raw, text: extractSingleChar(raw) };
+        }
       };
-      return withTimeout(fn(), 12000, `${t.provider} pass ${idx + 1}`);
+      return withTimeout(fn(), 12000, `${t.kind} pass ${idx + 1}`);
     })
   );
 
   const fulfilled = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
   const rejected  = settled.filter(r => r.status === 'rejected').map(r => r.reason?.message || String(r.reason));
 
-  const samples = fulfilled.filter(s =>
-    s.text && s.text.length >= Math.max(1, expectedLength - 2)
-  );
+  const fullSamples = fulfilled.filter(s => s.kind === 'full'
+    && s.text && s.text.length >= Math.max(1, expectedLength - 2));
+  const charSamples = fulfilled.filter(s => s.kind === 'char' && /^[a-zA-Z0-9]$/.test(s.text));
 
-  if (!samples.length) {
-    // Surface the real cause rather than a generic "Retrying…"
-    console.warn('[Quillforge OCR] All passes failed:', { rejected, raw: fulfilled.map(s => s.raw) });
-    const msg = rejected[0] || 'All OCR attempts failed';
-    throw new Error(msg);
+  if (!fullSamples.length && !charSamples.length) {
+    console.warn('[Quillforge OCR] All passes failed:', { rejected });
+    throw new Error(rejected[0] || 'All OCR attempts failed');
   }
 
-  const voted = voteCharacters(samples.map(s => s.text), expectedLength);
+  // ── Combined per-position vote ──
+  // For each character position, gather votes from:
+  //   1. Every full-image sample's character at that position
+  //   2. The per-character segment OCR for that position
+  // Segment OCR effectively gets equal weight to one full-image pass —
+  // since it's high-confidence single-char OCR, this is appropriate.
+  let voted = '';
+  const breakdown = [];
+  for (let i = 0; i < expectedLength; i++) {
+    const fromFull = fullSamples
+      .map(s => (s.text.length === expectedLength ? s.text[i] : null))
+      .filter(Boolean);
+    const fromChar = charSamples
+      .filter(s => s.position === i)
+      .map(s => s.text);
 
-  // Diagnostic log — see the per-provider breakdown in the SW console
+    const allVotes = [...fromFull, ...fromChar];
+    if (!allVotes.length) {
+      // No vote for this position — fall back to whatever full-image samples
+      // had at the position (even if length mismatches), else '?'.
+      const loose = fullSamples
+        .map(s => s.text[i])
+        .filter(c => c && /[a-zA-Z0-9]/.test(c));
+      voted += loose.length ? mostFrequent(loose) : '?';
+      breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: voted[i], note: 'fallback' });
+      continue;
+    }
+    const pick = mostFrequent(allVotes);
+    voted += pick;
+    breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: pick });
+  }
+
+  // ── Diagnostic log ──
   try {
-    console.groupCollapsed(`[Quillforge OCR] ${samples.length}/${passes} samples · voted "${voted}"`);
-    samples.forEach((s, i) => console.log(`  ${s.provider.padEnd(8)} → "${s.text}"`));
+    console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length} · voted "${voted}"`);
+    fullSamples.forEach((s, i) => console.log(`  full ${i + 1}: "${s.text}"`));
+    charSamples.forEach((s)    => console.log(`  char [${s.position}]: "${s.text}"`));
+    breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} → "${b.picked}"`));
     if (rejected.length) console.log('  rejected:', rejected);
     console.groupEnd();
   } catch (_) {}
 
-  if (!voted) throw new Error('Could not read CAPTCHA text');
+  // Remove trailing '?' fallbacks (length-tolerant downstream check)
+  voted = voted.replace(/\?+$/, '');
+  if (!voted) throw new Error('Vote produced empty result');
   return voted;
+}
+
+function mostFrequent(arr) {
+  const counts = {};
+  let best = arr[0], bestN = 0;
+  for (const x of arr) {
+    counts[x] = (counts[x] || 0) + 1;
+    if (counts[x] > bestN) { best = x; bestN = counts[x]; }
+  }
+  return best;
 }
 
 // Backwards-compatible single-image entry point (still used if a caller only
@@ -500,10 +528,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const variants = Array.isArray(msg.imageVariants) && msg.imageVariants.length
         ? msg.imageVariants
         : (msg.imageBase64 ? [msg.imageBase64] : []);
+      const segmentedChars = Array.isArray(msg.segmentedChars) ? msg.segmentedChars : [];
       const expectedLength = Number.isFinite(msg.expectedLength) ? msg.expectedLength : 5;
       const passes         = Number.isFinite(msg.passes) ? msg.passes : 5;
 
-      solveCaptchaEnsemble({ imageVariants: variants, apiKey: msg.apiKey, expectedLength, passes })
+      solveCaptchaEnsemble({
+        imageVariants:  variants,
+        segmentedChars,
+        apiKey:         msg.apiKey,
+        expectedLength,
+        passes,
+      })
         .then(text => sendResponse({ success: true, text }))
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true; // async
