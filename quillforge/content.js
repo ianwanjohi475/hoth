@@ -811,6 +811,10 @@ window.__qfTokens = { QF, ICON };
   let lastSolvedFingerprint = null;
   let lastSubmitFingerprint = null;
   let stuckSubmitCount      = 0;
+  // Per-image failure counter. If the same captcha image throws errors
+  // twice in a row, we refresh to a new one instead of looping forever.
+  let lastSeenFingerprint = null;
+  let failsOnSameImage    = 0;
 
   function injectStyles() {
     if (document.getElementById('qf-ridge-style')) return;
@@ -973,8 +977,14 @@ window.__qfTokens = { QF, ICON };
 
   async function runLoop() {
     if (!autosolveActive) return;
+    // Capture these in the outer scope so the catch block can use them even
+    // if the failure happened before destructuring settings.
+    let currentFp = null;
+    let captchaSelForCatch = '#writercaptcha img';
+
     try {
       const settings = await getSettings();
+      captchaSelForCatch = settings.captchaSelector;
       const { captchaSelector, inputSelector, submitSelector, ridgeApiKey, delay, captchaLength, ocrPasses } = settings;
 
       const imgEl = document.querySelector(captchaSelector);
@@ -990,6 +1000,7 @@ window.__qfTokens = { QF, ICON };
       // we wait). After 5 stuck cycles we force a refresh in case the page
       // froze with a stale captcha.
       const fp = fingerprintImage(imgEl);
+      currentFp = fp;
       if (fp === lastSubmitFingerprint) {
         stuckSubmitCount++;
         if (stuckSubmitCount >= 5) {
@@ -1004,6 +1015,12 @@ window.__qfTokens = { QF, ICON };
         return;
       }
       stuckSubmitCount = 0;
+
+      // Reset the per-image failure counter when we see a brand-new image.
+      if (fp !== lastSeenFingerprint) {
+        lastSeenFingerprint = fp;
+        failsOnSameImage = 0;
+      }
 
       setStatus('CAPTCHA found · preparing variants…', 'info');
       const variants = await preprocessVariants(imgEl);
@@ -1101,6 +1118,7 @@ window.__qfTokens = { QF, ICON };
         // next loop iteration waits for a fresh image instead of re-solving.
         lastSubmitFingerprint = fp;
         lastSolvedFingerprint = fp;
+        failsOnSameImage = 0;        // reset on a clean submit
         submitEl.click();
         setStatus(`Submitted · "${result}"`, 'ok');
       } else {
@@ -1109,8 +1127,28 @@ window.__qfTokens = { QF, ICON };
       scheduleNext(2000);
 
     } catch (err) {
-      setStatus('Retrying…', 'warn');
-      scheduleNext(2000);
+      // Count failures against this specific captcha image. After 2 in a
+      // row on the same image, refresh to a new one — never loop forever.
+      failsOnSameImage++;
+      const reason = (err && err.message ? err.message : 'unknown error').slice(0, 60);
+      console.warn(`[Quillforge Ridge] solve failed (${failsOnSameImage}/2): ${err?.message || err}`);
+
+      if (failsOnSameImage >= 2) {
+        setStatus(`Hard captcha · refreshing (${reason})`, 'warn');
+        failsOnSameImage = 0;
+        // Mark the current fingerprint as "submitted" so the next loop
+        // iteration waits for a new image rather than re-solving this one.
+        if (!currentFp) {
+          const errImg = document.querySelector(captchaSelForCatch);
+          if (errImg) currentFp = fingerprintImage(errImg);
+        }
+        if (currentFp) lastSubmitFingerprint = currentFp;
+        refreshCaptcha();
+        scheduleNext(2500);
+      } else {
+        setStatus(`Retry · ${reason}`, 'warn');
+        scheduleNext(2500);
+      }
     }
   }
 

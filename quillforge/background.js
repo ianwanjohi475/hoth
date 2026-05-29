@@ -172,7 +172,8 @@ const COLOUR_AND_COUNT = (L) =>
 - Each coloured shape is one character.
 - Count carefully. There MUST be exactly ${L} characters.
 - THIN characters (lowercase i, l, I, 1, .) are easy to miss — if your count is less than ${L}, look again at the start, end, and gaps between letters for a thin/faint character you skipped.
-- Do NOT skip any character even if it is faint, thin, or a colour that blends with the background.`;
+- Do NOT skip any character even if it is faint, thin, or a colour that blends with the background.
+- IGNORE noise overlays: wavy lines, strikethrough strokes, coloured streaks, dots, and squiggles that cross through or around the letters are DECORATION, not characters. Only solid, closed letter/digit shapes count.`;
 
 function ocrPrompts(L) {
   return [
@@ -262,31 +263,104 @@ function withTimeout(promise, ms, label = 'OCR call') {
   ]);
 }
 
-async function callMistralOCR(imageBase64, prompt, temperature, apiKey) {
-  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: MISTRAL_MODEL,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: imageBase64 } },
-          { type: 'text', text: prompt },
-        ],
-      }],
-      max_tokens:  120,
-      temperature: temperature,
-      top_p:       0.1,
-    }),
-  });
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.message || err?.error?.message || `Mistral ${res.status}`);
+// Groq's current multimodal model. If the user's Groq plan doesn't include
+// it, the call will fail and the ensemble falls back to Mistral-only — the
+// solver keeps working, just with one fewer model in the vote.
+const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: MISTRAL_MODEL,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageBase64 } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          max_tokens:  120,
+          temperature: temperature,
+          top_p:       0.1,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.message || err?.error?.message || `Mistral ${res.status}`;
+        // Back off on rate limit / transient server errors
+        if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
+          await sleep(400 + Math.random() * 400);
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content?.trim() || '';
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
+        await sleep(400);
+        continue;
+      }
+      throw e;
+    }
   }
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() || '';
+  throw lastErr || new Error('Mistral call failed');
+}
+
+async function callGroqVisionOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_VISION_MODEL,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageBase64 } },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          max_tokens:  120,
+          temperature: temperature,
+          top_p:       0.1,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.message || `Groq ${res.status}`;
+        if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
+          await sleep(400 + Math.random() * 400);
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content?.trim() || '';
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
+        await sleep(400);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error('Groq call failed');
 }
 
 // Per-position majority vote across samples. When ties occur we prefer the
@@ -314,45 +388,70 @@ function voteCharacters(samples, expectedLen) {
 }
 
 async function solveCaptchaEnsemble({ imageVariants, apiKey, expectedLength = 5, passes = 5 }) {
-  const key = apiKey || RIDGE_DEFAULT_KEY;
+  const mistralKey = apiKey || RIDGE_DEFAULT_KEY;
+
+  // Cross-model OCR uses the Groq key the user already configured for the
+  // article writer. Falls back to the default Groq key if none is set yet.
+  const groqKey = await new Promise((resolve) => {
+    chrome.storage.sync.get(['groqApiKey'], d => resolve(d.groqApiKey || DEFAULT_GROQ_KEY));
+  });
+
   const variants = Array.isArray(imageVariants) ? imageVariants.filter(Boolean) : [];
   if (!variants.length) throw new Error('No image variants provided');
 
   const prompts = ocrPrompts(expectedLength);
-  // Build the task list — round-robin across (variant, prompt), mostly temp 0
-  // with a couple of temp 0.25 calls to break model biases.
+
+  // Build the task list — round-robin across (variant, prompt).
+  // Provider split: ~75 % Mistral Pixtral (proven), ~25 % Groq Llama-4 Scout
+  // (cross-model diversity). Same-model errors correlate; different-model
+  // errors don't, which is what actually makes the vote effective.
+  const groqPasses = groqKey ? (passes >= 6 ? 2 : 1) : 0;
   const tasks = [];
   for (let i = 0; i < passes; i++) {
+    const useGroq = groqPasses > 0 && i >= (passes - groqPasses);
     tasks.push({
       variant:     variants[i % variants.length],
       prompt:      prompts[i % prompts.length],
       temperature: i < Math.ceil(passes * 0.6) ? 0 : 0.25,
+      provider:    useGroq ? 'groq' : 'mistral',
     });
   }
 
+  // Stagger requests by 80 ms each so we don't burst the rate limiter
   const settled = await Promise.allSettled(
-    tasks.map(t =>
-      withTimeout(callMistralOCR(t.variant, t.prompt, t.temperature, key), 8500, 'Pixtral pass')
-        .then(raw => extractAnswer(raw, expectedLength))
-    )
+    tasks.map((t, idx) => {
+      const fn = async () => {
+        if (idx > 0) await sleep(idx * 80);
+        const raw = t.provider === 'groq'
+          ? await callGroqVisionOCR(t.variant, t.prompt, t.temperature, groqKey)
+          : await callMistralOCR(t.variant, t.prompt, t.temperature, mistralKey);
+        return { provider: t.provider, raw, text: extractAnswer(raw, expectedLength) };
+      };
+      return withTimeout(fn(), 12000, `${t.provider} pass ${idx + 1}`);
+    })
   );
 
-  const samples = settled
-    .filter(r => r.status === 'fulfilled' && r.value && r.value.length >= Math.max(1, expectedLength - 2))
-    .map(r => r.value);
+  const fulfilled = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+  const rejected  = settled.filter(r => r.status === 'rejected').map(r => r.reason?.message || String(r.reason));
+
+  const samples = fulfilled.filter(s =>
+    s.text && s.text.length >= Math.max(1, expectedLength - 2)
+  );
 
   if (!samples.length) {
-    const firstErr = settled.find(r => r.status === 'rejected');
-    throw new Error(firstErr?.reason?.message || 'All OCR attempts failed');
+    // Surface the real cause rather than a generic "Retrying…"
+    console.warn('[Quillforge OCR] All passes failed:', { rejected, raw: fulfilled.map(s => s.raw) });
+    const msg = rejected[0] || 'All OCR attempts failed';
+    throw new Error(msg);
   }
 
-  const voted = voteCharacters(samples, expectedLength);
+  const voted = voteCharacters(samples.map(s => s.text), expectedLength);
 
-  // Diagnostic logging — visible in the service worker console
+  // Diagnostic log — see the per-provider breakdown in the SW console
   try {
-    console.groupCollapsed(`[Quillforge] OCR ensemble · ${samples.length}/${passes} samples`);
-    samples.forEach((s, i) => console.log(`pass ${i + 1}: "${s}"`));
-    console.log(`final  : "${voted}"`);
+    console.groupCollapsed(`[Quillforge OCR] ${samples.length}/${passes} samples · voted "${voted}"`);
+    samples.forEach((s, i) => console.log(`  ${s.provider.padEnd(8)} → "${s.text}"`));
+    if (rejected.length) console.log('  rejected:', rejected);
     console.groupEnd();
   } catch (_) {}
 
