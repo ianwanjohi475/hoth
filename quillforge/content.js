@@ -1031,7 +1031,13 @@ window.__qfTokens = { QF, ICON };
       // vote per character position to break ties in the full-image vote.
       const segments = segmentCharacters(imgEl, captchaLength);
 
-      setStatus(`Solving · ${ocrPasses} full + ${segments.length} per-char passes…`, 'info');
+      // Pure-JS local OCR — runs in ~30-80 ms, no API. Returns a complete
+      // candidate answer based on color segmentation + template matching.
+      // The background worker treats it as one additional sample in the
+      // per-position ensemble vote.
+      const cvHint = pureCVSolve(imgEl, captchaLength);
+
+      setStatus(`Solving · ${ocrPasses} full + ${segments.length} per-char + 1 local…`, 'info');
 
       const { text: result, confidence } = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
@@ -1039,6 +1045,7 @@ window.__qfTokens = { QF, ICON };
             type:           'SOLVE_CAPTCHA',
             imageVariants:  variants,
             segmentedChars: segments,
+            cvHint:         cvHint || null,
             apiKey:         ridgeApiKey,
             expectedLength: captchaLength,
             passes:         ocrPasses,
@@ -1463,6 +1470,344 @@ window.__qfTokens = { QF, ICON };
   function isSuspiciousAnswer(text) {
     if (!text) return false;
     return SUSPICIOUS_ANSWER_PATTERNS.some(re => re.test(text));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //   PURE-JS LOCAL OCR SOLVER
+  //
+  //   No API calls. No external dependencies. Runs entirely in the browser
+  //   in ~30-80 ms. Uses HOTH-specific structure: each character is painted
+  //   in a distinct vivid colour on near-white background with thin pastel
+  //   decoration lines.
+  //
+  //   Pipeline:
+  //     1. Histogram-cluster pixel colours, find N character colours
+  //     2. For each colour, build a binary mask of matching pixels
+  //     3. Morphological opening drops the thin pastel decoration lines
+  //     4. Bounding box → crop to character region
+  //     5. Aspect-preserving normalize to a fixed template size
+  //     6. Match against rendered-font templates (Jaccard similarity)
+  //     7. Sort by x-position → left-to-right answer string
+  //
+  //   The whole answer is sent to the background worker as cvHint and
+  //   counted as one additional sample in the per-position ensemble vote.
+  //   It's an independent signal — when the API drifts, the local solver
+  //   doesn't drift the same way, and vice versa.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const PCV_SIZE = 40;
+  const PCV_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const PCV_FONT_SPECS = [
+    '900 32px Arial, sans-serif',
+    '900 32px Tahoma, sans-serif',
+    '900 32px Verdana, sans-serif',
+    'bold 32px "Trebuchet MS", sans-serif',
+    'bold 32px "Comic Sans MS", sans-serif',
+  ];
+  let _pcvTemplatesCache = null;
+
+  function pcvImageToMask(id, threshold = 128) {
+    const mask = new Uint8Array(id.width * id.height);
+    for (let i = 0; i < mask.length; i++) {
+      const pi = i * 4;
+      const lum = 0.299 * id.data[pi] + 0.587 * id.data[pi + 1] + 0.114 * id.data[pi + 2];
+      mask[i] = lum < threshold ? 1 : 0;
+    }
+    return mask;
+  }
+
+  function pcvBBox(mask, w, h) {
+    let left = w, right = -1, top = h, bottom = -1, count = 0;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        if (mask[row + x]) {
+          if (x < left) left = x;
+          if (x > right) right = x;
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+          count++;
+        }
+      }
+    }
+    return count > 0 ? { left, right, top, bottom, count } : null;
+  }
+
+  function pcvCrop(mask, w, box) {
+    const cw = box.right - box.left + 1;
+    const ch = box.bottom - box.top + 1;
+    const out = new Uint8Array(cw * ch);
+    for (let y = 0; y < ch; y++) {
+      const src = (box.top + y) * w + box.left;
+      const dst = y * cw;
+      for (let x = 0; x < cw; x++) out[dst + x] = mask[src + x];
+    }
+    return { mask: out, w: cw, h: ch };
+  }
+
+  function pcvResize(mask, srcW, srcH, dstW, dstH) {
+    const result = new Uint8Array(dstW * dstH);
+    for (let y = 0; y < dstH; y++) {
+      const sy = Math.min(srcH - 1, Math.floor(y * srcH / dstH));
+      const srcRow = sy * srcW;
+      const dstRow = y * dstW;
+      for (let x = 0; x < dstW; x++) {
+        const sx = Math.min(srcW - 1, Math.floor(x * srcW / dstW));
+        result[dstRow + x] = mask[srcRow + sx];
+      }
+    }
+    return result;
+  }
+
+  // Trim to bounding box, pad to a square (preserves aspect), then resize
+  // to the standard template size. This way a thin '1' and a wide 'W' both
+  // end up centred and scaled to fill the same canvas.
+  function pcvTrimAndNormalize(mask, w, h) {
+    const box = pcvBBox(mask, w, h);
+    if (!box || box.count < 4) return null;
+    const cropped = pcvCrop(mask, w, box);
+    const sq = Math.max(cropped.w, cropped.h);
+    const square = new Uint8Array(sq * sq);
+    const offX = Math.floor((sq - cropped.w) / 2);
+    const offY = Math.floor((sq - cropped.h) / 2);
+    for (let y = 0; y < cropped.h; y++) {
+      const src = y * cropped.w;
+      const dst = (y + offY) * sq + offX;
+      for (let x = 0; x < cropped.w; x++) {
+        square[dst + x] = cropped.mask[src + x];
+      }
+    }
+    return pcvResize(square, sq, sq, PCV_SIZE, PCV_SIZE);
+  }
+
+  function pcvErode(mask, w, h) {
+    const out = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      const row = y * w;
+      const up = row - w, dn = row + w;
+      for (let x = 1; x < w - 1; x++) {
+        if (mask[row + x] && mask[up + x] && mask[dn + x] &&
+            mask[row + x - 1] && mask[row + x + 1]) {
+          out[row + x] = 1;
+        }
+      }
+    }
+    return out;
+  }
+
+  function pcvDilate(mask, w, h) {
+    const out = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      const up = (y > 0) ? row - w : row;
+      const dn = (y < h - 1) ? row + w : row;
+      for (let x = 0; x < w; x++) {
+        if (mask[row + x] ||
+            mask[up + x] || mask[dn + x] ||
+            (x > 0 && mask[row + x - 1]) ||
+            (x < w - 1 && mask[row + x + 1])) {
+          out[row + x] = 1;
+        }
+      }
+    }
+    return out;
+  }
+
+  // Jaccard similarity = |A ∩ B| / |A ∪ B|. Range [0,1], 1 = identical.
+  // More forgiving than Hamming distance when characters are shifted or
+  // slightly differently sized.
+  function pcvJaccard(a, b) {
+    let inter = 0, union = 0;
+    for (let i = 0; i < a.length; i++) {
+      const ai = a[i], bi = b[i];
+      if (ai && bi) inter++;
+      if (ai || bi) union++;
+    }
+    return union ? inter / union : 0;
+  }
+
+  function pcvGetTemplates() {
+    if (_pcvTemplatesCache) return _pcvTemplatesCache;
+    const templates = new Map();
+    for (const fontSpec of PCV_FONT_SPECS) {
+      for (const ch of PCV_CHARS) {
+        const cv = document.createElement('canvas');
+        cv.width = PCV_SIZE * 2;
+        cv.height = PCV_SIZE * 2;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.fillStyle = 'black';
+        ctx.font = fontSpec;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ch, cv.width / 2, cv.height / 2);
+
+        const id = ctx.getImageData(0, 0, cv.width, cv.height);
+        const mask = pcvImageToMask(id);
+        const trimmed = pcvTrimAndNormalize(mask, cv.width, cv.height);
+        if (!trimmed) continue;
+        if (!templates.has(ch)) templates.set(ch, []);
+        templates.get(ch).push(trimmed);
+      }
+    }
+    _pcvTemplatesCache = templates;
+    console.log(`[Quillforge PureCV] templates ready (${templates.size} chars × ${PCV_FONT_SPECS.length} fonts)`);
+    return templates;
+  }
+
+  // Confusable-pair refinement: when the best match and second-best are very
+  // close AND fall into a known visual-twin pair (0/O/o, l/I/1, S/s/5,
+  // M/m, P/p, etc.), prefer the one whose aspect ratio better matches the
+  // segment. Capitals are tall; lowercase letters are shorter. Digits live
+  // somewhere in between.
+  function pcvDisambiguate(bestChar, second, segH, segW) {
+    const pair = (a, b) => (bestChar === a && second === b) || (bestChar === b && second === a);
+    const aspectRatio = segW / Math.max(1, segH);
+    if (pair('0', 'O') || pair('O', 'o')) {
+      // Lowercase 'o' is shorter / wider; pick by aspect ratio
+      return aspectRatio > 0.85 ? 'o' : (bestChar === '0' || second === '0' ? '0' : 'O');
+    }
+    if (pair('1', 'l') || pair('1', 'I') || pair('l', 'I')) {
+      // 1 has a flag/serif → wider; l is straight tall; I is short straight
+      // Heuristic: if very narrow, more likely l or I
+      return bestChar;
+    }
+    return bestChar;
+  }
+
+  function pcvClassify(mask, w, h) {
+    const templates = pcvGetTemplates();
+    const normalized = pcvTrimAndNormalize(mask, w, h);
+    if (!normalized) return { char: '?', score: 0 };
+
+    let bestChar = '?', bestScore = 0;
+    let secondChar = '?', secondScore = 0;
+
+    for (const [ch, variants] of templates) {
+      for (const tpl of variants) {
+        const score = pcvJaccard(normalized, tpl);
+        if (score > bestScore) {
+          secondChar = bestChar; secondScore = bestScore;
+          bestChar = ch; bestScore = score;
+        } else if (score > secondScore && ch !== bestChar) {
+          secondChar = ch; secondScore = score;
+        }
+      }
+    }
+    const disambiguated = pcvDisambiguate(bestChar, secondChar, h, w);
+    return { char: disambiguated, score: bestScore, runnerUp: secondChar, runnerUpScore: secondScore };
+  }
+
+  // Find the N most distinctive non-background colours in the image.
+  // Bins the colour space, sorts by frequency, then merges similar
+  // colours (within a Euclidean distance threshold) so a slightly anti-
+  // aliased 'red' character doesn't get split into red-100 and red-110.
+  function pcvFindColors(id, count) {
+    const histogram = new Map();
+    const BIN = 32;
+    for (let i = 0; i < id.data.length; i += 4) {
+      const r = id.data[i], g = id.data[i + 1], b = id.data[i + 2];
+      const min = Math.min(r, g, b);
+      const max = Math.max(r, g, b);
+      if (min > 220) continue;                     // near-white background
+      const sat = max - min;
+      if (min > 140 && sat < 60) continue;         // light pastel decoration
+      const key = (Math.floor(r / BIN) * BIN) * 65536 +
+                  (Math.floor(g / BIN) * BIN) * 256 +
+                   Math.floor(b / BIN) * BIN;
+      histogram.set(key, (histogram.get(key) || 0) + 1);
+    }
+    const sorted = [...histogram.entries()].sort((a, b) => b[1] - a[1]);
+
+    const merged = [];
+    const MERGE_DIST = 70;
+    for (const [key, n] of sorted.slice(0, count * 5)) {
+      const r = (key >> 16) & 0xff;
+      const g = (key >> 8) & 0xff;
+      const b =  key        & 0xff;
+      let absorbed = false;
+      for (const m of merged) {
+        const d = Math.hypot(r - m.color[0], g - m.color[1], b - m.color[2]);
+        if (d < MERGE_DIST) { m.count += n; absorbed = true; break; }
+      }
+      if (!absorbed) merged.push({ color: [r, g, b], count: n });
+      if (merged.length >= count * 2) break;
+    }
+    return merged.slice(0, count).map(c => c.color);
+  }
+
+  function pcvExtractByColor(id, color, tolerance = 95) {
+    const w = id.width, h = id.height;
+    const mask = new Uint8Array(w * h);
+    for (let i = 0; i < mask.length; i++) {
+      const pi = i * 4;
+      const r = id.data[pi], g = id.data[pi + 1], b = id.data[pi + 2];
+      const d = Math.hypot(r - color[0], g - color[1], b - color[2]);
+      mask[i] = d < tolerance ? 1 : 0;
+    }
+    return mask;
+  }
+
+  function pureCVSolve(imgEl, expectedLength) {
+    try {
+      const w = imgEl.naturalWidth  || imgEl.width  || 0;
+      const h = imgEl.naturalHeight || imgEl.height || 0;
+      if (!w || !h) return '';
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(imgEl, 0, 0);
+      const id = ctx.getImageData(0, 0, w, h);
+
+      const colors = pcvFindColors(id, expectedLength);
+      if (!colors.length) return '';
+
+      const chars = [];
+      for (const color of colors) {
+        let mask = pcvExtractByColor(id, color);
+        // Open (erode → dilate) to drop thin decoration lines that
+        // happen to share approximately this colour.
+        mask = pcvDilate(pcvErode(mask, w, h), w, h);
+
+        const box = pcvBBox(mask, w, h);
+        if (!box || box.count < 30) continue;
+        const bw = box.right - box.left + 1;
+        const bh = box.bottom - box.top + 1;
+        if (bw < 6 || bh < 8) continue;  // too thin to be a glyph
+
+        const cropped = pcvCrop(mask, w, box);
+        const result = pcvClassify(cropped.mask, cropped.w, cropped.h);
+        chars.push({
+          char: result.char,
+          x: (box.left + box.right) / 2,
+          score: result.score,
+          runnerUp: result.runnerUp,
+          runnerUpScore: result.runnerUpScore,
+        });
+      }
+
+      chars.sort((a, b) => a.x - b.x);
+
+      const answer = chars.map(c => c.char).join('');
+      if (answer) {
+        console.log('[Quillforge PureCV] solve:', JSON.stringify({
+          answer,
+          detail: chars.map(c => ({
+            ch: c.char,
+            score: +(c.score * 100).toFixed(0),
+            runnerUp: c.runnerUp,
+            runnerUpScore: +(c.runnerUpScore * 100).toFixed(0),
+          })),
+        }));
+      }
+      return answer;
+    } catch (e) {
+      console.warn('[Quillforge PureCV] solve failed:', e.message);
+      return '';
+    }
   }
 
   async function preprocessVariants(imgEl) {

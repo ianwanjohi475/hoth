@@ -290,22 +290,27 @@ async function callMistralOCR(imageBase64, prompt, temperature, apiKey, attempts
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
     try {
+      // CRITICAL: Mistral rejects top_p≠1 when temperature=0 ("greedy
+      // sampling"). Send top_p only when we're actually doing stochastic
+      // sampling (temperature > 0); omit it on greedy calls.
+      const body = {
+        model:       MISTRAL_MODEL,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+        max_tokens:  120,
+        temperature: temperature,
+      };
+      if (temperature > 0) body.top_p = 0.1;
+
       const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: MISTRAL_MODEL,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: imageBase64 } },
-              { type: 'text', text: prompt },
-            ],
-          }],
-          max_tokens:  120,
-          temperature: temperature,
-          top_p:       0.1,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -413,10 +418,16 @@ function voteCharacters(samples, expectedLen) {
   return result;
 }
 
-async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, expectedLength = 5, passes = 5 }) {
+async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, apiKey, expectedLength = 5, passes = 5 }) {
   const mistralKey = apiKey || RIDGE_DEFAULT_KEY;
   const variants   = Array.isArray(imageVariants)  ? imageVariants.filter(Boolean)  : [];
   const segments   = Array.isArray(segmentedChars) ? segmentedChars.filter(Boolean) : [];
+  // cvHint is the answer from the pure-JS local OCR solver. Treated as one
+  // additional sample in the per-position vote alongside the API samples.
+  // Independent of Mistral's failure modes, which makes it real signal.
+  const cvSamples = (typeof cvHint === 'string' && cvHint.length >= Math.max(1, expectedLength - 2))
+    ? [{ kind: 'cv', text: cvHint, raw: cvHint }]
+    : [];
   if (!variants.length) throw new Error('No image variants provided');
 
   const prompts = ocrPrompts(expectedLength);
@@ -500,8 +511,11 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
       .filter(s => s.position === i)
       .map(s => s.text)
       .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
+    const fromCv = cvSamples
+      .map(s => (s.text.length > i ? s.text[i] : null))
+      .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
 
-    const allVotes = [...fromFull, ...fromChar];
+    const allVotes = [...fromFull, ...fromChar, ...fromCv];
     if (!allVotes.length) {
       // No vote for this position — try loose full-image positions (even
       // for length-mismatched samples), else mark '?'.
@@ -510,7 +524,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
         .filter(c => c && c !== '?' && /[a-zA-Z0-9]/.test(c));
       voted += loose.length ? mostFrequent(loose) : '?';
       positionConfidences.push(0);
-      breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: voted[i], note: 'fallback', conf: 0 });
+      breakdown.push({ pos: i, full: fromFull, char: fromChar, cv: fromCv, picked: voted[i], note: 'fallback', conf: 0 });
       continue;
     }
     const pick = mostFrequent(allVotes);
@@ -518,7 +532,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
     const conf = winnerCount / allVotes.length;
     voted += pick;
     positionConfidences.push(conf);
-    breakdown.push({ pos: i, full: fromFull, char: fromChar, picked: pick, conf });
+    breakdown.push({ pos: i, full: fromFull, char: fromChar, cv: fromCv, picked: pick, conf });
   }
   const overallConfidence = positionConfidences.length
     ? Math.min(...positionConfidences)
@@ -526,10 +540,11 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, apiKey, exp
 
   // ── Diagnostic log ──
   try {
-    console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length} · "${voted}" · conf ${(overallConfidence * 100).toFixed(0)}%`);
+    console.groupCollapsed(`[Quillforge OCR] full ${fullSamples.length}·char ${charSamples.length}·cv ${cvSamples.length} · "${voted}" · conf ${(overallConfidence * 100).toFixed(0)}%`);
     fullSamples.forEach((s, i) => console.log(`  full ${i + 1}: "${s.text}"`));
     charSamples.forEach((s)    => console.log(`  char [${s.position}]: "${s.text}"`));
-    breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} → "${b.picked}" (${(b.conf * 100).toFixed(0)}%)`));
+    cvSamples.forEach((s)      => console.log(`  cv  hint: "${s.text}"  (pure-JS local solver)`));
+    breakdown.forEach(b => console.log(`  pos ${b.pos}: full=${JSON.stringify(b.full)} char=${JSON.stringify(b.char)} cv=${JSON.stringify(b.cv || [])} → "${b.picked}" (${(b.conf * 100).toFixed(0)}%)`));
     if (rejected.length) console.log('  rejected:', rejected);
     console.groupEnd();
   } catch (_) {}
@@ -592,12 +607,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         ? msg.imageVariants
         : (msg.imageBase64 ? [msg.imageBase64] : []);
       const segmentedChars = Array.isArray(msg.segmentedChars) ? msg.segmentedChars : [];
+      const cvHint         = typeof msg.cvHint === 'string' ? msg.cvHint : null;
       const expectedLength = Number.isFinite(msg.expectedLength) ? msg.expectedLength : 5;
       const passes         = Number.isFinite(msg.passes) ? msg.passes : 5;
 
       solveCaptchaEnsemble({
         imageVariants:  variants,
         segmentedChars,
+        cvHint,
         apiKey:         msg.apiKey,
         expectedLength,
         passes,
