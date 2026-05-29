@@ -5,11 +5,12 @@
 // ============================================================================
 
 // ---------- Constants (carried over from the original suite) ----------------
-const DEFAULT_GROQ_KEY  = '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';
-const GROQ_MODEL        = 'llama-3.1-8b-instant';
-const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
-const MISTRAL_MODEL     = 'pixtral-12b-2409';
-const SECURITY_CODE     = '0000';
+const DEFAULT_GROQ_KEY    = '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';
+const GROQ_MODEL          = 'llama-3.1-8b-instant';
+const RIDGE_DEFAULT_KEY   = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
+const MISTRAL_MODEL       = 'pixtral-12b-2409';
+const DEFAULT_GEMINI_KEY  = 'AQ.Ab8RN6L0daqPlYRJLoDPmuDb6wNm2MY6w_pr-O7dPoQ1UHtk0Q';
+const SECURITY_CODE       = '0000';
 
 const EMAILJS = {
   endpoint:    'https://api.emailjs.com/api/v1.0/email/send',
@@ -38,6 +39,12 @@ chrome.runtime.onInstalled.addListener(() => {
     waitTime:       5,
     groqApiKey:     DEFAULT_GROQ_KEY,
     groqModel:      GROQ_MODEL,
+    geminiApiKey:   DEFAULT_GEMINI_KEY,
+  });
+  // For existing installs that already have settings, make sure the new
+  // Gemini default lands too (only sets when missing/empty).
+  chrome.storage.sync.get(['geminiApiKey'], (d) => {
+    if (!d.geminiApiKey) chrome.storage.sync.set({ geminiApiKey: DEFAULT_GEMINI_KEY });
   });
 
   chrome.storage.local.get(
@@ -562,7 +569,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
   const { groqApiKey, geminiApiKey } = await new Promise(r =>
     chrome.storage.sync.get(['groqApiKey', 'geminiApiKey'], d => r({
       groqApiKey:   d.groqApiKey   || DEFAULT_GROQ_KEY,
-      geminiApiKey: d.geminiApiKey || '',
+      geminiApiKey: d.geminiApiKey || DEFAULT_GEMINI_KEY,
     }))
   );
   const keys = {

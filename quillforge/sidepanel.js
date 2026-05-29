@@ -6,6 +6,7 @@
 const PROTECTED_PIN     = '0000';   // Groq API key unlock
 const RIDGE_PIN         = '0000';   // Ridge / Mistral API key unlock
 const DEFAULT_GROQ_KEY  = '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';
+const DEFAULT_GEMINI_KEY = 'AQ.Ab8RN6L0daqPlYRJLoDPmuDb6wNm2MY6w_pr-O7dPoQ1UHtk0Q';
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
 const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
 const WRITER_URL        = 'https://www.thehoth.com/writer';
@@ -610,9 +611,13 @@ function maskGeminiKey(key) {
   return key.slice(0, 6) + '••••••••••••••••••••' + key.slice(-4);
 }
 
-// Load Gemini key from sync storage (same place as Groq key)
+// Load Gemini key from sync storage. Falls back to the bundled default so
+// the cascade has a working key out of the box on first install.
 chrome.storage.sync.get(['geminiApiKey'], (data) => {
-  geminiCurrentKey = data.geminiApiKey || '';
+  geminiCurrentKey = data.geminiApiKey || DEFAULT_GEMINI_KEY;
+  // Persist the default if storage was empty (first install before the
+  // service worker's onInstalled wrote anything).
+  if (!data.geminiApiKey) chrome.storage.sync.set({ geminiApiKey: DEFAULT_GEMINI_KEY });
   geminiKeyText.textContent = maskGeminiKey(geminiCurrentKey);
 });
 
