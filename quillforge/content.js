@@ -806,6 +806,11 @@ window.__qfTokens = { QF, ICON };
   let solveLoop       = null;
   let overlayBtn      = null;
   let statusEl        = null;
+  // Track which captcha image we last solved so we don't burn API calls
+  // re-solving the same image while we wait for the page to refresh it.
+  let lastSolvedFingerprint = null;
+  let lastSubmitFingerprint = null;
+  let stuckSubmitCount      = 0;
 
   function injectStyles() {
     if (document.getElementById('qf-ridge-style')) return;
@@ -948,6 +953,24 @@ window.__qfTokens = { QF, ICON };
     setStatus('', '');
   }
 
+  // Cheap fingerprint of a captcha image — last 200 chars of the data URL.
+  // Captcha images are inline data: URLs so the tail is effectively a hash.
+  function fingerprintImage(imgEl) {
+    return (imgEl.src || '').slice(-200);
+  }
+
+  // Best-effort refresh of the captcha. Tries the "get a new code" link
+  // first (preserves any other page state), falls back to location.reload().
+  function refreshCaptcha() {
+    const link = document.querySelector('#writercaptcha a[href*="/writer"]')
+              || document.querySelector('#writercaptcha a');
+    if (link) {
+      link.click();
+      return true;
+    }
+    try { window.location.reload(); return true; } catch (_) { return false; }
+  }
+
   async function runLoop() {
     if (!autosolveActive) return;
     try {
@@ -960,6 +983,27 @@ window.__qfTokens = { QF, ICON };
         scheduleNext(1200);
         return;
       }
+
+      // ── New-captcha gate ──
+      // Don't re-solve the same image we already attempted. The page either
+      // refreshed (new fingerprint, we solve) or it didn't (same fingerprint,
+      // we wait). After 5 stuck cycles we force a refresh in case the page
+      // froze with a stale captcha.
+      const fp = fingerprintImage(imgEl);
+      if (fp === lastSubmitFingerprint) {
+        stuckSubmitCount++;
+        if (stuckSubmitCount >= 5) {
+          setStatus('Stuck on same image · refreshing…', 'warn');
+          stuckSubmitCount = 0;
+          refreshCaptcha();
+          scheduleNext(2500);
+          return;
+        }
+        setStatus('Waiting for new CAPTCHA…', 'warn');
+        scheduleNext(1200);
+        return;
+      }
+      stuckSubmitCount = 0;
 
       setStatus('CAPTCHA found · preparing variants…', 'info');
       const variants = await preprocessVariants(imgEl);
@@ -986,6 +1030,23 @@ window.__qfTokens = { QF, ICON };
       });
 
       if (!autosolveActive) return;
+
+      // ── Length gate ──
+      // HOTH's input has minlength=5 / maxlength=5. Submitting a shorter
+      // string just trips the browser's built-in validator silently — the
+      // form never posts and the loop spins forever. Catch the short read
+      // BEFORE clicking submit and refresh the captcha to try a new image.
+      if (result.length !== captchaLength) {
+        console.warn('[Quillforge Ridge] Length mismatch', { ocr: result, got: result.length, need: captchaLength });
+        setStatus(`Short read · ${result.length}/${captchaLength} chars · refreshing`, 'warn');
+        lastSolvedFingerprint = fp;
+        // Mark this fingerprint so we don't immediately re-solve while the
+        // new image loads.
+        lastSubmitFingerprint = fp;
+        refreshCaptcha();
+        scheduleNext(2500);
+        return;
+      }
 
       // Locate the answer input
       const inputEl = document.querySelector(inputSelector);
@@ -1036,8 +1097,12 @@ window.__qfTokens = { QF, ICON };
         document.querySelector('input[type="submit"].btn-success') ||
         document.querySelector('input[type="submit"]');
       if (submitEl) {
+        // Record the fingerprint of the captcha we just submitted so the
+        // next loop iteration waits for a fresh image instead of re-solving.
+        lastSubmitFingerprint = fp;
+        lastSolvedFingerprint = fp;
         submitEl.click();
-        setStatus('Submitted · waiting…', 'ok');
+        setStatus(`Submitted · "${result}"`, 'ok');
       } else {
         setStatus('Submit button not found', 'err');
       }
@@ -1092,7 +1157,17 @@ window.__qfTokens = { QF, ICON };
     return { canvas, ctx, w, h };
   }
 
-  // Variant A: upscale 3× with nearest-neighbour (crisp pixel edges)
+  // Variant A: 4× nearest-neighbour upscale (crisp colored pixels)
+  // KEEPS COLOUR — best for multi-coloured captchas (HOTH-style)
+  function variantColor4x(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 4, false);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant B: 3× nearest-neighbour upscale (crisp pixel edges, colour kept)
   function variantCrispUpscale(imgEl) {
     try {
       const { canvas, ctx } = makeCanvas(imgEl, 3, false);
@@ -1101,7 +1176,7 @@ window.__qfTokens = { QF, ICON };
     } catch (_) { return null; }
   }
 
-  // Variant B: upscale 2× with bilinear (smooth) — gives vision model larger glyphs
+  // Variant C: 2× bilinear upscale (smooth, colour kept)
   function variantSmoothUpscale(imgEl) {
     try {
       const { canvas, ctx } = makeCanvas(imgEl, 2, true);
@@ -1110,7 +1185,52 @@ window.__qfTokens = { QF, ICON };
     } catch (_) { return null; }
   }
 
-  // Variant C: grayscale + high contrast, 3× — strips colour noise, sharpens glyph vs background
+  // Variant D: ANTI-WHITE BINARISATION — treat any non-white pixel as
+  // foreground regardless of colour. This catches THIN coloured characters
+  // (yellow, light red, etc.) that pure luminance/Otsu would lose because
+  // their grey value is too close to white. The fix that recovers HOTH's
+  // thin first-character problem.
+  function variantAntiWhite(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 3, false);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d  = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        // Min of RGB channels — small if ANY channel is dark (any colour)
+        const minCh = Math.min(d[i], d[i + 1], d[i + 2]);
+        const v = minCh > 215 ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(id, 0, 0);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant E: SATURATION-AWARE binarisation. Treat highly saturated OR
+  // dark pixels as foreground. Catches bright-colour characters even when
+  // they have high luminance (yellow on white, light-green on white).
+  function variantSaturation(imgEl) {
+    try {
+      const { canvas, ctx } = makeCanvas(imgEl, 3, false);
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+      const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d  = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const sat = max - min;
+        // Foreground if: colourful (sat>35) OR dark (max<200)
+        const v = (sat > 35 || max < 200) ? 0 : 255;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(id, 0, 0);
+      return canvas.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Variant F: grayscale + high contrast, 3× — backup for monochrome captchas
   function variantContrast(imgEl) {
     try {
       const { canvas, ctx } = makeCanvas(imgEl, 3, true);
@@ -1120,8 +1240,8 @@ window.__qfTokens = { QF, ICON };
     } catch (_) { return null; }
   }
 
-  // Variant D: adaptive binarised B&W, 3× — uses Otsu-like threshold computed
-  // from the image histogram so the threshold adapts to image brightness.
+  // Variant G: Otsu-binarised luminance, 3× — adaptive threshold from each
+  // image's own histogram. Last-resort variant for monochrome captchas.
   function variantBinarise(imgEl) {
     try {
       const { canvas, ctx } = makeCanvas(imgEl, 3, false);
@@ -1129,13 +1249,11 @@ window.__qfTokens = { QF, ICON };
       const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d  = id.data;
 
-      // Histogram of luminance
       const hist = new Uint32Array(256);
       for (let i = 0; i < d.length; i += 4) {
         const y = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
         hist[y]++;
       }
-      // Otsu's method: pick threshold that maximises between-class variance
       const total = canvas.width * canvas.height;
       let sum = 0;
       for (let i = 0; i < 256; i++) sum += i * hist[i];
@@ -1151,7 +1269,6 @@ window.__qfTokens = { QF, ICON };
         const between = wB * wF * (mB - mF) * (mB - mF);
         if (between > varMax) { varMax = between; threshold = t; }
       }
-
       for (let i = 0; i < d.length; i += 4) {
         const y = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
         const v = y > threshold ? 255 : 0;
@@ -1163,26 +1280,32 @@ window.__qfTokens = { QF, ICON };
   }
 
   async function preprocessVariants(imgEl) {
-    // Direct same-origin canvas path — works on thehoth.com
+    // ORDER MATTERS — round-robin in background uses this order. Front-
+    // load the colour-aware variants, since HOTH captchas are multi-coloured.
     const direct = [
-      variantCrispUpscale(imgEl),
-      variantSmoothUpscale(imgEl),
-      variantContrast(imgEl),
-      variantBinarise(imgEl),
+      variantColor4x(imgEl),         // colour-preserving 4× crisp
+      variantAntiWhite(imgEl),       // catches thin coloured chars
+      variantSaturation(imgEl),      // colour-aware threshold
+      variantCrispUpscale(imgEl),    // colour 3× crisp
+      variantSmoothUpscale(imgEl),   // colour 2× smooth
+      variantContrast(imgEl),        // monochrome fallback
+      variantBinarise(imgEl),        // Otsu monochrome fallback
     ].filter(Boolean);
     if (direct.length) return direct;
 
-    // Cross-origin fallback: reload image via crossOrigin='anonymous' and try again
+    // Cross-origin fallback path
     try {
       const cleanImg = await loadCleanImage(imgEl.src);
       return [
+        variantColor4x(cleanImg),
+        variantAntiWhite(cleanImg),
+        variantSaturation(cleanImg),
         variantCrispUpscale(cleanImg),
         variantSmoothUpscale(cleanImg),
         variantContrast(cleanImg),
         variantBinarise(cleanImg),
       ].filter(Boolean);
     } catch (_) {
-      // Last resort: raw fetch → base64 (single variant)
       const single = await fetchImageAsBase64(imgEl.src);
       return single ? [single] : [];
     }

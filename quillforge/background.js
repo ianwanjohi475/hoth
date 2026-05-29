@@ -166,10 +166,20 @@ const OCR_DISAMBIGUATION = `Be especially careful with case-ambiguous and shape-
 - 2 vs Z vs z
 - Same-shape pairs: C/c, K/k, M/m, P/p, S/s, U/u, V/v, W/w, X/x, Y/y, Z/z — these letters look similar in upper and lower case; judge by relative SIZE/HEIGHT compared to neighbouring tall letters.`;
 
+const COLOUR_AND_COUNT = (L) =>
+  `IMPORTANT — colour and count discipline:
+- This CAPTCHA may have characters in DIFFERENT COLOURS (red, green, blue, yellow, purple, orange, etc.) on a light background. The colour is decoration — read the CHARACTER each colour represents.
+- Each coloured shape is one character.
+- Count carefully. There MUST be exactly ${L} characters.
+- THIN characters (lowercase i, l, I, 1, .) are easy to miss — if your count is less than ${L}, look again at the start, end, and gaps between letters for a thin/faint character you skipped.
+- Do NOT skip any character even if it is faint, thin, or a colour that blends with the background.`;
+
 function ocrPrompts(L) {
   return [
-    // (1) Strict format with disambiguation
+    // (1) Strict format with full disambiguation
     `You are a precise CAPTCHA OCR system. The image contains EXACTLY ${L} characters.
+
+${COLOUR_AND_COUNT(L)}
 
 Rules:
 - Each character is uppercase A-Z, lowercase a-z, or digit 0-9
@@ -182,40 +192,50 @@ ${OCR_DISAMBIGUATION}
 Output ONLY this exact format, nothing else:
 <ans>RESULT</ans>`,
 
-    // (2) Chain-of-thought
-    `Examine this CAPTCHA image carefully. It contains ${L} characters in a row.
+    // (2) Chain-of-thought with explicit count step
+    `Examine this CAPTCHA image carefully. It contains EXACTLY ${L} characters in a row.
 
-Step 1: Identify each character left to right.
-Step 2: For each one, decide: uppercase letter, lowercase letter, or digit.
-Step 3: Combine into the final string, preserving the EXACT case of each letter.
+Step 1: COUNT the coloured shapes left to right. There must be ${L}. If you counted fewer, look again — you missed a thin character (i, l, I, 1, .).
+Step 2: Identify each character. Some may be coloured (red, green, blue, etc.) — the colour is irrelevant, only the character shape matters.
+Step 3: For each one, decide: uppercase letter, lowercase letter, or digit. Compare against the heights of neighbouring letters.
+Step 4: Combine into a final string of EXACTLY ${L} characters, preserving the EXACT case.
 
-CRITICAL: 'A' and 'a' are different characters. Pay attention to relative height of each glyph.
+Output only the final answer between <ans> and </ans> tags. The string MUST be ${L} characters long.`,
 
-Output only the final answer between <ans> and </ans> tags.`,
+    // (3) Concise + structured + count emphasis
+    `OCR this ${L}-character multi-coloured CAPTCHA. Case-sensitive [a-zA-Z0-9].
 
-    // (3) Concise + structured
-    `OCR this ${L}-character CAPTCHA. Case-sensitive alphanumeric [a-zA-Z0-9].
+Output exactly ${L} characters. Do NOT skip thin or faint coloured characters.
 
 ${OCR_DISAMBIGUATION}
 
 Reply only: <ans>RESULT</ans>`,
 
-    // (4) Direct, case-focused
-    `Read the ${L} characters in this CAPTCHA. The CAPTCHA mixes uppercase letters, lowercase letters, and digits — copy the case EXACTLY as drawn.
+    // (4) Direct, case + colour focus
+    `Read the ${L} characters in this CAPTCHA. Each character may be a DIFFERENT COLOUR (red, green, blue, yellow, etc.) — the colours are decorative, focus on character shape.
+
+The CAPTCHA mixes uppercase letters, lowercase letters, and digits — copy the case EXACTLY as drawn.
 
 Pay attention to which letters are tall (capitals, ascenders like b/d/h/k/l) vs which are short (a, c, e, m, n, o, r, s, u, v, w, x, z). Lowercase letters that look like capitals are usually shorter.
 
+There are EXACTLY ${L} characters. Do not skip thin or faint ones at the start or end.
+
 Output: <ans>YOUR_ANSWER</ans>`,
 
-    // (5) Final-answer focus
-    `This is a CAPTCHA puzzle with exactly ${L} alphanumeric characters. Carefully transcribe each one, paying close attention to:
-1. Case of letters (capital vs small)
-2. Distinguishing similar shapes (0/O, 1/l/I, 5/S, etc.)
-3. Reading order (left to right)
+    // (5) Final-answer focus, count-first
+    `This is a multi-coloured CAPTCHA with EXACTLY ${L} alphanumeric characters.
+
+${COLOUR_AND_COUNT(L)}
+
+Carefully transcribe each one, paying close attention to:
+1. Total count = ${L} (recount if your draft is shorter)
+2. Case of letters (capital vs small)
+3. Distinguishing similar shapes (0/O, 1/l/I, 5/S, etc.)
+4. Reading order (left to right)
 
 ${OCR_DISAMBIGUATION}
 
-Reply with only: <ans>ANSWER</ans>`,
+Reply with only: <ans>ANSWER</ans>  (must be exactly ${L} characters)`,
   ];
 }
 
