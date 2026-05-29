@@ -312,7 +312,7 @@ function stripDataPrefix(b64) {
   return typeof b64 === 'string' ? b64.replace(/^data:[^;]+;base64,/i, '') : b64;
 }
 
-async function callGeminiOCR(imageBase64, prompt, temperature, apiKey, attempts = 3) {
+async function callGeminiOCR(imageBase64, prompt, temperature, apiKey, attempts = 2) {
   const data = stripDataPrefix(imageBase64);
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
@@ -336,8 +336,11 @@ async function callGeminiOCR(imageBase64, prompt, temperature, apiKey, attempts 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const msg = err?.error?.message || `Gemini ${res.status}`;
+        // Tight backoff — 1-2 s only, so a transient 429 doesn't push the
+        // total solve time past ~6 s. Gemini free tier (15 RPM) accommodates
+        // this for single-call captchas.
         if ((res.status === 429 || res.status >= 500) && i < attempts - 1) {
-          await sleep(3000 + Math.random() * 2000 + i * 1500);
+          await sleep(1000 + Math.random() * 1000);
           lastErr = new Error(msg);
           continue;
         }
@@ -348,7 +351,7 @@ async function callGeminiOCR(imageBase64, prompt, temperature, apiKey, attempts 
     } catch (e) {
       lastErr = e;
       if (i < attempts - 1 && /rate|429|timeout|network|fetch/i.test(e.message || '')) {
-        await sleep(3000 + Math.random() * 2000);
+        await sleep(1000 + Math.random() * 1000);
         continue;
       }
       throw e;
@@ -537,28 +540,14 @@ function voteCharacters(samples, expectedLen) {
   return result;
 }
 
-// Cascading vision OCR: try the best provider configured, fall back on
-// any error (including 4xx auth errors, model-not-available, rate limits
-// exhausted after retries). Returns the raw model text from whichever
-// provider succeeded, plus which one it was for the diagnostic log.
-async function cascadeOCR(imageBase64, prompt, temperature, keys, attempts = 3) {
-  const cascade = [];
-  if (keys.gemini)  cascade.push({ name: 'gemini',  fn: callGeminiOCR,      key: keys.gemini });
-  if (keys.groq)    cascade.push({ name: 'groq',    fn: callGroqVisionOCR,  key: keys.groq });
-  if (keys.mistral) cascade.push({ name: 'mistral', fn: callMistralOCR,     key: keys.mistral });
-  if (!cascade.length) throw new Error('No OCR provider configured');
-
-  let lastErr = null;
-  for (const provider of cascade) {
-    try {
-      const raw = await provider.fn(imageBase64, prompt, temperature, provider.key, attempts);
-      return { provider: provider.name, raw };
-    } catch (e) {
-      lastErr = e;
-      console.warn(`[Quillforge OCR] ${provider.name} failed: ${e.message} — falling back`);
-    }
-  }
-  throw lastErr || new Error('All OCR providers failed');
+// Cascading vision OCR — currently GEMINI-ONLY MODE per user request.
+// Other providers kept in code for easy re-enable, but disabled here so
+// every call goes only through Gemini. Lets us isolate Gemini's accuracy
+// without provider-fallback noise muddying the result.
+async function cascadeOCR(imageBase64, prompt, temperature, keys, attempts = 2) {
+  if (!keys.gemini) throw new Error('Gemini API key not configured');
+  const raw = await callGeminiOCR(imageBase64, prompt, temperature, keys.gemini, attempts);
+  return { provider: 'gemini', raw };
 }
 
 async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, apiKey, expectedLength = 5, passes = 5 }) {
@@ -620,13 +609,15 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
   }));
 
   // ── Run everything in parallel with stagger ──
-  // Stagger keeps us under per-provider rate limits. 1200 ms is just over
-  // Mistral's 1 req/s ceiling; Groq and Gemini have headroom for more.
+  // Stagger only when there are 3+ parallel calls — single calls can fire
+  // immediately so the user isn't waiting on artificial delays. Gemini's
+  // 15 req/min ceiling has plenty of headroom for normal solve cadence.
   const allTasks = [...fullTasks, ...charTasks];
+  const staggerMs = allTasks.length > 2 ? 1200 : 0;
   const settled = await Promise.allSettled(
     allTasks.map((t, idx) => {
       const fn = async () => {
-        if (idx > 0) await sleep(idx * 1200);
+        if (idx > 0 && staggerMs) await sleep(idx * staggerMs);
         const { provider, raw } = await cascadeOCR(t.image, t.prompt, t.temperature, keys);
         if (t.kind === 'full') {
           return { ...t, provider, raw, text: extractAnswer(raw, expectedLength) };
@@ -634,7 +625,7 @@ async function solveCaptchaEnsemble({ imageVariants, segmentedChars, cvHint, api
           return { ...t, provider, raw, text: extractSingleChar(raw) };
         }
       };
-      return withTimeout(fn(), 20000, `${t.kind} pass ${idx + 1}`);
+      return withTimeout(fn(), 12000, `${t.kind} pass ${idx + 1}`);
     })
   );
 

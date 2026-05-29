@@ -691,7 +691,7 @@ chrome.storage.local.get({
   submitSelector:   'input[type="submit"].btn.btn-success.btn-large',
   delay:            3,
   autosolveEnabled: false,
-  ocrPasses:        2,
+  ocrPasses:        1,
   captchaLength:    5,
   minConfidence:    0,
 }, (data) => {

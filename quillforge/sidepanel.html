@@ -429,16 +429,16 @@
 
         <div class="slider-card">
           <div class="slider-row">
-            <span class="slider-label">Mistral passes</span>
-            <span class="slider-value" id="ocrPassesVal">2 passes</span>
+            <span class="slider-label">Gemini passes</span>
+            <span class="slider-value" id="ocrPassesVal">1 pass</span>
           </div>
-          <div class="slider-desc">Full-image API calls per captcha. Mistral free tier ≈ 1 req/s — keep this low to avoid rate limits. The pure-JS local solver runs alongside for free and gives one extra vote per character.</div>
-          <input type="range" class="range" id="ocrPasses" min="1" max="9" step="1" value="2" />
+          <div class="slider-desc">Full-image Gemini calls per captcha. 1 = fastest (~2-3 s per captcha). Pure-JS local solver runs alongside for free.</div>
+          <input type="range" class="range" id="ocrPasses" min="1" max="5" step="1" value="1" />
           <div class="presets" data-group="ocrPasses">
-            <button class="preset" data-val="1">Minimal</button>
-            <button class="preset" data-val="2">Default</button>
-            <button class="preset" data-val="3">More</button>
-            <button class="preset" data-val="5">High (rate-limit risk)</button>
+            <button class="preset" data-val="1">Fastest</button>
+            <button class="preset" data-val="2">Balanced</button>
+            <button class="preset" data-val="3">Accurate</button>
+            <button class="preset" data-val="5">Max</button>
           </div>
         </div>
 

@@ -1217,10 +1217,9 @@ window.__qfTokens = { QF, ICON };
           submitSelector:  result.submitSelector  || 'input[type="submit"].btn.btn-success.btn-large',
           delay:           result.delay !== undefined ? result.delay : 3,
           captchaLength:   Number.isFinite(result.captchaLength) ? result.captchaLength : 5,
-          // Rate-limit reality: free tier ≈ 1 req/s. 2 full-image passes ≈ 2.5s.
-          // Defaulting to 2 keeps us out of 429 hell — bump in the slider if you
-          // want more samples and don't mind slower solves.
-          ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 2,
+          // Gemini-only mode: 1 call per captcha keeps solve time ~2-3 s.
+          // Pure-JS local solver still provides a cross-check vote for free.
+          ocrPasses:       Number.isFinite(result.ocrPasses)     ? result.ocrPasses     : 1,
           // OFF by default. User asked for "no low/high confidence" — system
           // always submits its best guess and lets HOTH reject if wrong.
           minConfidence:   Number.isFinite(result.minConfidence) ? result.minConfidence : 0,
@@ -1924,5 +1923,29 @@ window.__qfTokens = { QF, ICON };
 
   if (document.body) injectOverlay();
   else document.addEventListener('DOMContentLoaded', injectOverlay);
+
+  // ── Overlay watchdog ─────────────────────────────────────────────────
+  // Page refreshes (clicking "get a new code"), HOTH SPA-style DOM swaps,
+  // and the brief tear-down/re-init window between navigations can all
+  // unhook the overlay button. A 2 s heartbeat re-injects it whenever it
+  // disappears, restoring the button well under one solve cycle.
+  setInterval(() => {
+    if (!document.body) return;
+    if (!document.getElementById('qf-ridge-wrap')) {
+      injectOverlay();
+    }
+  }, 2000);
+
+  // Some pages mutate document.body via JS rather than navigating. A
+  // MutationObserver on the document root catches those cases too and
+  // re-injects immediately rather than waiting for the next heartbeat.
+  try {
+    const docObserver = new MutationObserver(() => {
+      if (document.body && !document.getElementById('qf-ridge-wrap')) {
+        injectOverlay();
+      }
+    });
+    docObserver.observe(document.documentElement, { childList: true, subtree: true });
+  } catch (_) { /* ignore */ }
 
 })();
