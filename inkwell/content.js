@@ -772,12 +772,21 @@ Requirements:
       });
 
       if (!autosolveActive) return;
-      setStatus(`Solved: ${result}`, '#2DD4BF');
+
+      // Geometric case corrector — fixes case-ambiguous letters (c/C, o/O,
+      // s/S, u/U, v/V, w/W, x/X, z/Z, m/M, n/N, k/K, p/P) by measuring each
+      // character's actual pixel height in the captcha and comparing to a
+      // reference height built from unambiguous tall characters.
+      const corrected = caseCorrect(result, imgEl);
+      if (corrected !== result) {
+        console.log(`[Inkwell] case-corrected: "${result}" → "${corrected}"`);
+      }
+      setStatus(`Solved: ${corrected}`, '#2DD4BF');
 
       const inputEl = document.querySelector(inputSelector);
       if (inputEl) {
         inputEl.focus();
-        inputEl.value = result;
+        inputEl.value = corrected;
         inputEl.dispatchEvent(new Event('input',  { bubbles: true }));
         inputEl.dispatchEvent(new Event('change', { bubbles: true }));
         inputEl.blur();
@@ -868,6 +877,141 @@ Requirements:
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  GEOMETRIC CASE CORRECTOR
+  //
+  //  For HOTH-style multi-coloured captchas where each character is its
+  //  own colour: model OCR is usually correct on the SHAPE of every
+  //  character, but case-ambiguous letters (c/C, o/O, s/S, u/U, v/V,
+  //  w/W, x/X, z/Z, m/M, n/N, k/K, p/P) are hit-or-miss because the only
+  //  difference between cases is RELATIVE HEIGHT. We can measure that
+  //  height directly from the source image, so we do.
+  //
+  //  Algorithm:
+  //   1. Find the content span in the image (skip left/right margins).
+  //   2. Divide the span into N equal slices (one per character).
+  //   3. For each slice, measure the height of dark/coloured pixels.
+  //   4. Build a reference height from characters in the answer whose
+  //      case is unambiguous (digits, distinctly-capital letters like
+  //      B/D/E/F/H/L/Q/R/T/Y, and lowercase ascenders b/d/f/h/l/t).
+  //   5. For each AMBIGUOUS letter, compare its height to the reference:
+  //        ratio >= 0.85 → force uppercase
+  //        ratio <= 0.72 → force lowercase
+  //        between      → trust the model
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Letters whose case is ambiguous from shape alone — same glyph, only
+  // size differs between upper and lower case.
+  const _CASE_AMBIGUOUS = new Set([
+    'c','C','k','K','m','M','o','O','p','P',
+    's','S','u','U','v','V','w','W','x','X','z','Z',
+  ]);
+
+  // Characters that read as "tall" in this captcha — used as height
+  // reference. Capitals that don't have a same-shape lowercase, plus
+  // lowercase ascenders, plus digits.
+  const _TALL_REFERENCE = /[ABDEFGHLQRTY0-9bdfhlt]/;
+
+  function caseCorrect(answer, imgEl) {
+    try {
+      if (!answer || !imgEl || answer.length === 0) return answer;
+      const heights = _measureCharHeights(imgEl, answer.length);
+      if (!heights || heights.length !== answer.length) return answer;
+
+      // Build the tall reference from characters whose case the model
+      // surely got right.
+      const tallHeights = [];
+      for (let i = 0; i < answer.length; i++) {
+        if (_TALL_REFERENCE.test(answer[i]) && heights[i] > 0) {
+          tallHeights.push(heights[i]);
+        }
+      }
+      if (tallHeights.length === 0) return answer; // no reference -> bail
+
+      tallHeights.sort((a, b) => a - b);
+      const refTall = tallHeights[Math.floor(tallHeights.length / 2)];
+      if (refTall <= 0) return answer;
+
+      let out = '';
+      for (let i = 0; i < answer.length; i++) {
+        const ch = answer[i];
+        if (!_CASE_AMBIGUOUS.has(ch) || heights[i] <= 0) {
+          out += ch;
+          continue;
+        }
+        const ratio = heights[i] / refTall;
+        if      (ratio >= 0.85) out += ch.toUpperCase();
+        else if (ratio <= 0.72) out += ch.toLowerCase();
+        else                    out += ch;  // borderline — trust the model
+      }
+      return out;
+    } catch (e) {
+      console.warn('[Inkwell] caseCorrect failed:', e.message);
+      return answer;
+    }
+  }
+
+  function _measureCharHeights(imgEl, charCount) {
+    const w = imgEl.naturalWidth  || imgEl.width  || 0;
+    const h = imgEl.naturalHeight || imgEl.height || 0;
+    if (!w || !h || charCount <= 0) return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(imgEl, 0, 0);
+    let id;
+    try { id = ctx.getImageData(0, 0, w, h); }
+    catch (_) { return null; } // tainted canvas (shouldn't happen for HOTH)
+    const d = id.data;
+
+    // 1. Find content span (leftmost/rightmost columns with significant
+    //    non-white content). Threshold filters out the thin decoration lines.
+    const density = new Int32Array(w);
+    for (let x = 0; x < w; x++) {
+      let count = 0;
+      for (let y = 0; y < h; y++) {
+        const i = (y * w + x) * 4;
+        const minCh = Math.min(d[i], d[i + 1], d[i + 2]);
+        if (minCh < 200) count++;
+      }
+      density[x] = count;
+    }
+    const colThreshold = Math.max(2, Math.floor(h * 0.10));
+    let left = 0, right = w - 1;
+    while (left < w && density[left] < colThreshold) left++;
+    while (right >= 0 && density[right] < colThreshold) right--;
+    if (right - left < w * 0.30) { left = 0; right = w - 1; }
+
+    // 2. Equal-width slices, measure top/bottom of dark pixels in each.
+    const spanW = (right - left + 1);
+    const charW = spanW / charCount;
+    const heights = new Array(charCount).fill(0);
+    for (let i = 0; i < charCount; i++) {
+      const x0 = Math.floor(left + i * charW);
+      const x1 = Math.floor(left + (i + 1) * charW);
+      let top = h, bottom = -1;
+      for (let y = 0; y < h; y++) {
+        const row = y * w;
+        let found = false;
+        for (let x = x0; x < x1; x++) {
+          const idx = (row + x) * 4;
+          // Stricter threshold here (180 vs 200) so thin pastel decoration
+          // lines don't get counted as character pixels and inflate height.
+          const minCh = Math.min(d[idx], d[idx + 1], d[idx + 2]);
+          if (minCh < 180) { found = true; break; }
+        }
+        if (found) {
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+        }
+      }
+      heights[i] = bottom >= top ? bottom - top + 1 : 0;
+    }
+    return heights;
+  }
 
   // ─── Listen for messages from popup ───────────────────────────────────────
   chrome.runtime.onMessage.addListener((msg) => {
