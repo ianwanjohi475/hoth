@@ -751,7 +751,7 @@ Requirements:
       const imgEl = document.querySelector(captchaSelector);
       if (!imgEl || !imgEl.src || imgEl.naturalWidth === 0) {
         setStatus('Scanning for CAPTCHA...', '#ffaa00');
-        scheduleNext(1200);
+        scheduleNext(600);   // tight poll while image is loading
         return;
       }
 
@@ -795,9 +795,10 @@ Requirements:
       const delayMs = (parseFloat(delay) || 0) * 1000;
       if (delayMs > 0) {
         let remaining = parseFloat(delay);
+        // Show the actual text we're about to autofill, not just the time.
         const countdownId = setInterval(() => {
           if (!autosolveActive) return;
-          setStatus(`Submitting in ${remaining.toFixed(1)}s...`, '#ffaa00');
+          setStatus(`Submitting "${corrected}" in ${remaining.toFixed(1)}s...`, '#ffaa00');
           remaining -= 0.1;
         }, 100);
         await sleep(delayMs);
@@ -813,15 +814,18 @@ Requirements:
 
       if (submitEl) {
         submitEl.click();
-        setStatus('Submitted! Waiting for next...', '#2DD4BF');
+        setStatus(`Submitted "${corrected}"`, '#2DD4BF');
       } else {
         setStatus('Submit btn not found — retrying...', '#FB7185');
       }
-      scheduleNext(2000);
+      // Snappy resume — HOTH's "You must enter the captcha" message
+      // appears with a fresh captcha image immediately, so 500 ms is plenty
+      // to let the page settle and the new image render.
+      scheduleNext(500);
 
     } catch (err) {
-      setStatus('Retrying...', '#ffaa00');
-      scheduleNext(2000);
+      setStatus(`Retrying... (${(err && err.message || '').slice(0,40)})`, '#ffaa00');
+      scheduleNext(1000);
     }
   }
 

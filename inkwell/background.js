@@ -3,7 +3,7 @@
 const DEFAULT_GROQ_KEY  = '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';
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
 const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
-const SECURITY_CODE     = '4759';
+const SECURITY_CODE     = '0000';
 
 // ── Open the side panel when the toolbar icon is clicked ─────────────────────
 chrome.sidePanel

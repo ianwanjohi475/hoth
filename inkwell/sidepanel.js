@@ -1,6 +1,6 @@
-// ─── HOTH Suite — Popup Script ───────────────────────────────────────────────
+// ─── Inkwell — Side Panel Script ─────────────────────────────────────────────
 
-const PROTECTED_PIN  = '4759';
+const PROTECTED_PIN  = '0000';   // Same PIN unlocks both Groq and Mistral keys
 const DEFAULT_KEY    = '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';
 const GROQ_MODEL     = 'llama-3.1-8b-instant';
 const WRITER_URL     = 'https://www.thehoth.com/writer';
