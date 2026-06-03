@@ -253,46 +253,122 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 });
 
-// ─── Ridge Neural Solver — Mistral API ───────────────────────────────────────
+// ─── Ridge Neural Solver — Mistral primary, Gemini fallback on 429 ─────────
+// The default Mistral key is shared across every installation of this
+// extension, so its rate-limit ceiling gets hit constantly. When that
+// happens, we silently fall back to Gemini 2.0 Flash — generous 15 RPM
+// free tier, completely independent of Mistral's quotas. The user sees
+// no difference at the UI level: same status messages, same answer.
+
+const GEMINI_FALLBACK_KEY = 'AQ.Ab8RN6L0daqPlYRJLoDPmuDb6wNm2MY6w_pr-O7dPoQ1UHtk0Q';
+
+const CAPTCHA_PROMPT_TEXT =
+  'This is a CAPTCHA image with exactly 5 alphanumeric characters. ' +
+  'Read the characters shown and return ONLY those 5 characters. ' +
+  'PRESERVE CASE EXACTLY — if a letter is uppercase output it uppercase, if it is lowercase output it lowercase. ' +
+  'Compare relative HEIGHT against neighbouring letters to judge case (capitals are tall, lowercase letters are short). ' +
+  'Distinguish carefully: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b. ' +
+  'Ignore wavy decorative lines that cross through the letters. ' +
+  'No spaces, no punctuation, no other text — only the 5 characters.';
+
+function isRateLimitError(e) {
+  const m = (e && e.message || '').toLowerCase();
+  return m.includes('429') || m.includes('rate') || m.includes('limit') || m.includes('quota');
+}
+
 async function solveCaptcha(imageBase64, apiKey) {
   const key = apiKey || RIDGE_DEFAULT_KEY;
 
+  // Attempt 1: Mistral
+  try {
+    return await callMistral(imageBase64, key);
+  } catch (e1) {
+    if (!isRateLimitError(e1)) throw e1;
+
+    // Attempt 2: short backoff, retry Mistral once (it often recovers in ~3 s)
+    console.log('[Inkwell] Mistral 429 — backing off and retrying…');
+    await new Promise(r => setTimeout(r, 2500 + Math.random() * 1500));
+    try {
+      return await callMistral(imageBase64, key);
+    } catch (e2) {
+      if (!isRateLimitError(e2)) throw e2;
+
+      // Attempt 3: Gemini fallback (independent quota, much higher ceiling)
+      console.log('[Inkwell] Mistral still 429 — falling back to Gemini');
+      try {
+        return await callGemini(imageBase64);
+      } catch (geminiErr) {
+        console.warn('[Inkwell] Gemini fallback failed:', geminiErr.message);
+        throw new Error(`Rate limited (Mistral) and Gemini failed: ${geminiErr.message}`);
+      }
+    }
+  }
+}
+
+async function callMistral(imageBase64, apiKey) {
   const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: 'pixtral-12b-2409',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: imageBase64 } },
-            {
-              type: 'text',
-              text: 'This is a CAPTCHA image with exactly 5 alphanumeric characters. Read the characters shown and return ONLY those 5 characters. PRESERVE CASE EXACTLY — if a letter is uppercase output it uppercase, if it is lowercase output it lowercase. Compare relative HEIGHT against neighbouring letters to judge case (capitals are tall, lowercase letters are short). Distinguish carefully: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b. Ignore wavy decorative lines that cross through the letters. No spaces, no punctuation, no other text — only the 5 characters.'
-            }
-          ]
-        }
-      ],
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: imageBase64 } },
+          { type: 'text', text: CAPTCHA_PROMPT_TEXT },
+        ],
+      }],
       max_tokens: 20,
-      temperature: 0
-    })
+      temperature: 0,
+    }),
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.message || `API error ${response.status}`);
+    const msg = err.message || err?.error?.message || '';
+    if (response.status === 429) throw new Error(`429: ${msg || 'Rate limit exceeded'}`);
+    throw new Error(msg || `Mistral ${response.status}`);
   }
 
   const data = await response.json();
   let text = data.choices?.[0]?.message?.content?.trim() || '';
-  // Strip anything non-alphanumeric, then take the first 5 chars.
-  // DO NOT uppercase — HOTH captchas are case-sensitive, so the case the
-  // model returned must be preserved verbatim.
   text = text.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
-  if (text.length === 0) throw new Error('Could not read CAPTCHA text');
+  if (!text.length) throw new Error('Mistral returned empty');
+  return text;
+}
+
+async function callGemini(imageBase64) {
+  // Strip the data:image/...;base64, prefix — Gemini's inline_data wants raw base64.
+  const raw = imageBase64.replace(/^data:image\/[^;]+;base64,/i, '');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(GEMINI_FALLBACK_KEY)}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: CAPTCHA_PROMPT_TEXT },
+          { inline_data: { mime_type: 'image/png', data: raw } },
+        ],
+      }],
+      generationConfig: { temperature: 0, maxOutputTokens: 50 },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Gemini ${res.status}`);
+  }
+  const json = await res.json();
+  let text = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+  // Strip <ans> tags if present (Gemini sometimes wraps), then non-alphanumeric, then 5 chars.
+  const tag = text.match(/<ans>\s*([^<\s]+)\s*<\/ans>/i);
+  if (tag) text = tag[1];
+  text = text.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
+  if (!text.length) throw new Error('Gemini returned empty');
   return text;
 }
