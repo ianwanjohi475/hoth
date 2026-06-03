@@ -279,28 +279,21 @@ function isRateLimitError(e) {
 async function solveCaptcha(imageBase64, apiKey) {
   const key = apiKey || RIDGE_DEFAULT_KEY;
 
-  // Attempt 1: Mistral
+  // ONE Mistral attempt (same as the user's original extension). No retry
+  // on 429 — retrying just adds load to the already-rate-limited shared
+  // key, which is what was making things worse. If Mistral comes back 429,
+  // fall straight through to Gemini.
   try {
     return await callMistral(imageBase64, key);
-  } catch (e1) {
-    if (!isRateLimitError(e1)) throw e1;
+  } catch (mistralErr) {
+    if (!isRateLimitError(mistralErr)) throw mistralErr;
 
-    // Attempt 2: short backoff, retry Mistral once (it often recovers in ~3 s)
-    console.log('[Inkwell] Mistral 429 — backing off and retrying…');
-    await new Promise(r => setTimeout(r, 2500 + Math.random() * 1500));
+    console.log('[Inkwell] Mistral 429 — falling back to Gemini');
     try {
-      return await callMistral(imageBase64, key);
-    } catch (e2) {
-      if (!isRateLimitError(e2)) throw e2;
-
-      // Attempt 3: Gemini fallback (independent quota, much higher ceiling)
-      console.log('[Inkwell] Mistral still 429 — falling back to Gemini');
-      try {
-        return await callGemini(imageBase64);
-      } catch (geminiErr) {
-        console.warn('[Inkwell] Gemini fallback failed:', geminiErr.message);
-        throw new Error(`Rate limited (Mistral) and Gemini failed: ${geminiErr.message}`);
-      }
+      return await callGemini(imageBase64);
+    } catch (geminiErr) {
+      console.warn('[Inkwell] Gemini fallback failed:', geminiErr.message);
+      throw new Error(`Rate limited (Mistral) + Gemini: ${geminiErr.message}`);
     }
   }
 }
