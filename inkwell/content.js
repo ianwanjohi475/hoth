@@ -773,14 +773,12 @@ Requirements:
 
       if (!autosolveActive) return;
 
-      // Geometric case corrector — fixes case-ambiguous letters (c/C, o/O,
-      // s/S, u/U, v/V, w/W, x/X, z/Z, m/M, n/N, k/K, p/P) by measuring each
-      // character's actual pixel height in the captcha and comparing to a
-      // reference height built from unambiguous tall characters.
-      const corrected = caseCorrect(result, imgEl);
-      if (corrected !== result) {
-        console.log(`[Inkwell] case-corrected: "${result}" → "${corrected}"`);
-      }
+      // Trust Gemini's answer verbatim. The old geometric case-corrector
+      // measured pixel heights to guess case, but the decorative wavy lines
+      // in HOTH captchas throw the measurement off and it INTRODUCED case
+      // errors (e.g. vVCHH → VVCHH). Gemini reads case well on its own, so
+      // we no longer post-process the answer.
+      const corrected = result;
       setStatus(`Solved: ${corrected}`, '#2DD4BF');
 
       const inputEl = document.querySelector(inputSelector);

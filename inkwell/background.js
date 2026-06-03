@@ -262,10 +262,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Google rotates model names. After the first solve only ONE call is made.
 
 const GEMINI_MODELS = [
-  'gemini-2.5-flash',        // current stable GA flash vision model
+  'gemini-3.5-flash',        // current model used throughout the official docs
   'gemini-flash-latest',     // alias that always points to the newest flash
-  'gemini-2.0-flash',        // still served in many regions
-  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
 ];
 let _geminiModel = null; // cached working model id for this service-worker life
 
@@ -313,9 +313,11 @@ async function callGeminiModel(model, rawBase64, apiKey, noThink) {
     },
     body: JSON.stringify({
       contents: [{
+        // Docs best practice: with a single image + text, put the image part
+        // FIRST and the text prompt AFTER it.
         parts: [
-          { text: CAPTCHA_PROMPT },
           { inline_data: { mime_type: 'image/png', data: rawBase64 } },
+          { text: CAPTCHA_PROMPT },
         ],
       }],
       generationConfig,
