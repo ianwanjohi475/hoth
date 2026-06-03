@@ -824,7 +824,10 @@ Requirements:
       scheduleNext(500);
 
     } catch (err) {
-      setStatus(`Retrying... (${(err && err.message || '').slice(0,40)})`, '#ffaa00');
+      // Silent retry — the overlay never spells out API errors. The catch
+      // simply schedules the next tick and the loop keeps trying. Matches
+      // the original extension's behaviour exactly.
+      setStatus('Retrying...', '#ffaa00');
       scheduleNext(1000);
     }
   }
