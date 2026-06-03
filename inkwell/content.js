@@ -852,13 +852,24 @@ Requirements:
     });
   }
 
+  // Upscale 3× before sending to the OCR model. A larger, crisp image is
+  // significantly easier for the vision model to read accurately — the glyph
+  // edges and relative letter heights (which decide case) become clearer.
+  const OCR_UPSCALE = 3;
+
   function imageToBase64(imgEl) {
     return new Promise((resolve, reject) => {
       try {
+        const w = imgEl.naturalWidth  || imgEl.width  || 200;
+        const h = imgEl.naturalHeight || imgEl.height || 60;
         const canvas = document.createElement('canvas');
-        canvas.width  = imgEl.naturalWidth  || imgEl.width  || 200;
-        canvas.height = imgEl.naturalHeight || imgEl.height || 60;
-        canvas.getContext('2d').drawImage(imgEl, 0, 0);
+        canvas.width  = w * OCR_UPSCALE;
+        canvas.height = h * OCR_UPSCALE;
+        const ctx = canvas.getContext('2d');
+        // High-quality smoothing so the upscaled glyphs stay clean, not blocky.
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/png');
         if (dataUrl && dataUrl.length > 200) resolve(dataUrl);
         else fetchImageAsBase64(imgEl.src).then(resolve).catch(reject);

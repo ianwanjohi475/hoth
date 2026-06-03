@@ -420,7 +420,7 @@ testApiBtn.addEventListener('click', async () => {
 //  RIDGE NEURAL SOLVER — Popup Logic
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
+const RIDGE_DEFAULT_KEY = 'AQ.Ab8RN6JAxNa4uMdd8587SJqKdqJm7cXOfdYiEnhbN5se6xKMVQ';
 
 let ridgeCurrentKey        = RIDGE_DEFAULT_KEY;
 let ridgeAutosolveActive   = false;
@@ -463,7 +463,12 @@ chrome.storage.local.get({
   delay:            3,
   autosolveEnabled: false,
 }, (data) => {
-  ridgeCurrentKey = data.ridgeApiKey || RIDGE_DEFAULT_KEY;
+  // Migrate older installs: if the stored key isn't a Gemini key (e.g. the
+  // old Mistral key), drop it and use the baked-in Gemini default instead.
+  const stored = data.ridgeApiKey || '';
+  const isGemini = stored.startsWith('AQ.') || stored.startsWith('AIza');
+  ridgeCurrentKey = isGemini ? stored : RIDGE_DEFAULT_KEY;
+  if (!isGemini) chrome.storage.local.set({ ridgeApiKey: RIDGE_DEFAULT_KEY });
   ridgeKeyDisplay.textContent = maskRidgeKey(ridgeCurrentKey);
   ridgeCaptchaSel.value  = data.captchaSelector;
   ridgeInputSel.value    = data.inputSelector;

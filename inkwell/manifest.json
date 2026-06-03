@@ -9,7 +9,8 @@
     "https://www.thehoth.com/*",
     "https://api.emailjs.com/*",
     "https://api.groq.com/*",
-    "https://api.mistral.ai/*"
+    "https://api.mistral.ai/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "content_scripts": [
     {

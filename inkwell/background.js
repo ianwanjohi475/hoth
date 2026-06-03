@@ -2,7 +2,9 @@
 
 const DEFAULT_GROQ_KEY  = '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';
 const GROQ_MODEL        = 'llama-3.1-8b-instant';
-const RIDGE_DEFAULT_KEY = '4qNzAeraznT1SvoUvF2gPC9J0L6G1J0O';
+// Ridge solver now uses Google Gemini for OCR (far better at reading case
+// than the old Mistral Pixtral 12B). This is the baked-in default key.
+const RIDGE_DEFAULT_KEY = 'AQ.Ab8RN6JAxNa4uMdd8587SJqKdqJm7cXOfdYiEnhbN5se6xKMVQ';
 const SECURITY_CODE     = '0000';
 
 // ── Open the side panel when the toolbar icon is clicked ─────────────────────
@@ -253,42 +255,95 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 });
 
-// ─── Ridge Neural Solver — Mistral API ───────────────────────────────────────
-async function solveCaptcha(imageBase64, apiKey) {
-  const key = apiKey || RIDGE_DEFAULT_KEY;
+// ─── Ridge Neural Solver — Google Gemini OCR ─────────────────────────────────
+// Gemini reads text-in-image (including case) far better than Mistral Pixtral.
+// We probe a small list of current Gemini flash model IDs and cache whichever
+// one the account/region actually serves, so the extension keeps working as
+// Google rotates model names. After the first solve only ONE call is made.
 
-  const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+const GEMINI_MODELS = [
+  'gemini-flash-latest',     // alias that always points to the current flash model
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-3-flash-preview',
+];
+let _geminiModel = null; // cached working model id for this service-worker life
+
+const CAPTCHA_PROMPT =
+  'This image is a CAPTCHA containing exactly 5 alphanumeric characters ' +
+  '(A-Z, a-z, 0-9), each drawn in a different colour on a light background. ' +
+  'Return ONLY those 5 characters, nothing else. ' +
+  'PRESERVE CASE EXACTLY: output uppercase letters as uppercase and lowercase letters as lowercase. ' +
+  'Judge case by RELATIVE HEIGHT — capital letters are TALL (full height), ' +
+  'lowercase letters are SHORT (about 60% height) unless they have an ascender (b d f h k l t) or descender (g j p q y). ' +
+  'Carefully distinguish look-alikes: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b, 2/Z/z, 8/B, c/C, k/K, o/O, p/P, s/S, u/U, v/V, w/W, x/X, z/Z. ' +
+  'Ignore the thin wavy decorative lines that cross through the characters. ' +
+  'No spaces, no quotes, no punctuation, no explanation — output only the 5 characters.';
+
+// Looks like a Gemini key (AQ.… new format, or AIza… classic). Anything else
+// (e.g. a leftover Mistral key in storage) is ignored in favour of the default.
+function looksLikeGeminiKey(k) {
+  return typeof k === 'string' && (k.startsWith('AQ.') || k.startsWith('AIza'));
+}
+
+async function callGeminiModel(model, rawBase64, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'pixtral-12b-2409',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: imageBase64 } },
-          {
-            type: 'text',
-            text: 'This is a CAPTCHA image with exactly 5 alphanumeric characters. Read the characters shown and return ONLY those 5 characters. PRESERVE CASE EXACTLY — if a letter is uppercase output it uppercase, if it is lowercase output it lowercase. Compare relative HEIGHT against neighbouring letters to judge case (capitals are tall, lowercase letters are short). Distinguish carefully: 0/O/o, 1/l/I, 5/S/s, 9/g/q, 6/G/b. Ignore wavy decorative lines that cross through the letters. No spaces, no punctuation, no other text — only the 5 characters.',
-          },
+      contents: [{
+        parts: [
+          { text: CAPTCHA_PROMPT },
+          { inline_data: { mime_type: 'image/png', data: rawBase64 } },
         ],
       }],
-      max_tokens: 20,
-      temperature: 0,
+      generationConfig: { temperature: 0, maxOutputTokens: 50, topP: 1 },
     }),
   });
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.message || `API error ${response.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `Gemini ${res.status}`;
+    // Signal "try a different model id" for not-found / unsupported errors.
+    const notFound = res.status === 404 || /not found|not supported|unknown name|does not exist/i.test(msg);
+    const e = new Error(msg);
+    e.modelMissing = notFound;
+    throw e;
   }
 
-  const data = await response.json();
-  let text = data.choices?.[0]?.message?.content?.trim() || '';
-  // Strip non-alphanumeric, keep case verbatim (HOTH captchas are case-sensitive).
+  const json = await res.json();
+  let text = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+  // Gemini may wrap in quotes/backticks/tags — strip to alphanumerics, keep case.
+  const tag = text.match(/<ans>\s*([^<\s]+)\s*<\/ans>/i);
+  if (tag) text = tag[1];
   text = text.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
-  if (text.length === 0) throw new Error('Could not read CAPTCHA text');
+  if (text.length === 0) throw new Error('Gemini returned no readable text');
   return text;
+}
+
+async function solveCaptcha(imageBase64, apiKey) {
+  const key = looksLikeGeminiKey(apiKey) ? apiKey : RIDGE_DEFAULT_KEY;
+  const rawBase64 = (imageBase64 || '').replace(/^data:image\/[^;]+;base64,/i, '');
+
+  // Use the cached working model first, if we found one already.
+  if (_geminiModel) {
+    return await callGeminiModel(_geminiModel, rawBase64, key);
+  }
+
+  // First solve of this session: find a model id the account actually serves.
+  let lastErr = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const result = await callGeminiModel(model, rawBase64, key);
+      _geminiModel = model; // cache the winner — every later solve is 1 call
+      console.log('[Inkwell] Gemini OCR using model:', model);
+      return result;
+    } catch (e) {
+      lastErr = e;
+      if (e.modelMissing) continue;   // wrong model id — try the next one
+      throw e;                        // real error (auth, quota, network) — surface it
+    }
+  }
+  throw lastErr || new Error('No working Gemini model found');
 }
