@@ -660,9 +660,11 @@ Requirements:
     if (!window.InkwellCNN) return;             // script not present
     if (window.InkwellCNN.ready) return;
     if (_cnnLoading) return _cnnLoading;
-    _cnnLoading = window.InkwellCNN
-      .loadModel(chrome.runtime.getURL('model/weights.json'))
-      .catch(e => console.warn('[Inkwell] CNN model load failed:', e));
+    const url = chrome.runtime.getURL('model/weights.json');
+    console.log('[Inkwell] loading CNN model from', url);
+    _cnnLoading = window.InkwellCNN.loadModel(url)
+      .then(() => console.log('[Inkwell] CNN model loaded ✓'))
+      .catch(e => console.warn('[Inkwell] CNN model load FAILED:', e));
     return _cnnLoading;
   }
 
@@ -780,13 +782,26 @@ Requirements:
 
       // ── Local CNN solve (no API, no quota, no limits) ──
       await ensureCNN();
-      const sol = window.InkwellCNN && window.InkwellCNN.ready
-        ? window.InkwellCNN.solveImage(imgEl)
-        : { text: '', conf: 0, n: 0 };
+      if (!window.InkwellCNN || !window.InkwellCNN.ready) {
+        setStatus('Model not loaded ✗', '#ff4466');
+        console.warn('[Inkwell] model not ready when solving');
+        scheduleNext(1500);
+        return;
+      }
+      let sol;
+      try {
+        sol = window.InkwellCNN.solveImage(imgEl);
+      } catch (e) {
+        setStatus('Solve error: ' + (e.message || e).slice(0, 30), '#ff4466');
+        console.warn('[Inkwell] solveImage error:', e);
+        scheduleNext(1500);
+        return;
+      }
       const result = sol.text;
+      // Visible diagnostics: how many chars segmented + what was read.
+      console.log(`[Inkwell] solve: segChars=${sol.n} text="${result}" conf=${(sol.conf*100|0)}%`);
       if (!result || result.length < 4) {
-        // segmentation produced nothing usable — refresh and move on
-        setStatus('Reading… (retry)', '#ffaa00');
+        setStatus(`seg ${sol.n} → "${result}" (retry)`, '#ffaa00');
         scheduleNext(900);
         return;
       }
