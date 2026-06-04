@@ -645,18 +645,16 @@ Requirements:
   let overlayBtn      = null;
   let statusEl        = null;
 
-  // ── Confidence policy (calibrated on held-out data) ──
-  //   conf >= 0.95 -> 100% of submitted answers were correct
-  //   conf >= 0.90 -> 99.4% correct
-  // We only submit at/above SUBMIT_CONF so every answer we enter is, in
-  // practice, correct. Anything less confident gets a fresh code (free on
-  // HOTH). A run of unlucky reads can't loop forever: after MAX_REFRESH
-  // fresh codes we submit the best read we've seen (>= FALLBACK_CONF).
-  const SUBMIT_CONF   = 0.92;   // ~99.6% precision, ~36% of images pass first try
-  const FALLBACK_CONF = 0.80;   // last-resort floor after many refreshes
-  const MAX_REFRESH   = 12;     // free codes before falling back
-  let refreshCount = 0;
-  let best = null;              // { text, conf } highest-confidence read this round
+  // ── Self-labeling collector ──
+  // Every captcha we submit is stored in chrome.storage.local with its image
+  // (base64 PNG) and the text we entered. After submit, we watch for HOTH's
+  // "You must enter the captcha" error: if it does NOT appear within 4s, the
+  // submission was accepted -> the pair is real-world ground truth and gets
+  // flagged 'verified'. Verified pairs are the training data needed to fine-
+  // tune the model on real HOTH captchas (the only path to true ~100%).
+  const SAMPLES_KEY = 'inkwellSamples';
+  let lastSample = null;        // { id, text } awaiting verification
+  let verifyTimer = null;
 
   // Click "get a new code" to fetch a fresh captcha (free on HOTH). Falls
   // back to nothing if the link isn't found.
@@ -747,7 +745,8 @@ Requirements:
   function startAutosolve(silent) {
     if (autosolveActive) return;
     autosolveActive = true;
-    refreshCount = 0; best = null;
+    lastSample = null;
+    if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
     chrome.storage.local.set({ autosolveEnabled: true });
     setOverlayStopMode();
     if (!silent) setStatus('Scanning for CAPTCHA...', '#2DD4BF');
@@ -777,6 +776,66 @@ Requirements:
     overlayBtn.style.borderColor = '#2DD4BF60';
     overlayBtn.style.boxShadow = '0 0 18px #2DD4BF30, 0 4px 20px rgba(0,0,0,0.6)';
   }
+
+  // Snapshot the captcha image as a small base64 PNG. Bounded by the natural
+  // size of HOTH's image (~230x70), so each sample is well under 30 KB.
+  function snapshotImage(imgEl) {
+    try {
+      const w = imgEl.naturalWidth || imgEl.width;
+      const h = imgEl.naturalHeight || imgEl.height;
+      if (!w || !h) return null;
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d', { willReadFrequently: true }).drawImage(imgEl, 0, 0);
+      return cv.toDataURL('image/png');
+    } catch (_) { return null; }
+  }
+
+  // Save (image, text) as a pending sample. Capped at 500 entries so storage
+  // can't grow unbounded; oldest unverified samples drop out first.
+  function captureSample(imgEl, text, conf) {
+    const png = snapshotImage(imgEl);
+    if (!png) return;
+    const id = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    chrome.storage.local.get([SAMPLES_KEY], (res) => {
+      const arr = res[SAMPLES_KEY] || [];
+      arr.push({ id, png, text, conf, verified: false, ts: Date.now() });
+      while (arr.length > 500) {
+        // drop oldest unverified first; if all verified, drop oldest overall
+        const idx = arr.findIndex(s => !s.verified);
+        arr.splice(idx >= 0 ? idx : 0, 1);
+      }
+      chrome.storage.local.set({ [SAMPLES_KEY]: arr });
+    });
+    lastSample = { id, text };
+    if (verifyTimer) clearTimeout(verifyTimer);
+    // If HOTH doesn't show its captcha-error within 4s, the submission was
+    // accepted -> mark this pair verified-correct (real ground truth).
+    verifyTimer = setTimeout(() => verifySample(id, true), 4000);
+  }
+
+  function verifySample(id, ok) {
+    if (!ok || !id) return;
+    chrome.storage.local.get([SAMPLES_KEY], (res) => {
+      const arr = res[SAMPLES_KEY] || [];
+      const s = arr.find(x => x.id === id);
+      if (s) { s.verified = true; chrome.storage.local.set({ [SAMPLES_KEY]: arr }); }
+    });
+  }
+
+  // Watch for HOTH's captcha-error message. If it appears, the last sample
+  // was wrong -> don't mark verified (it stays as a low-value sample).
+  const CAPTCHA_ERR_RE = /must enter the captcha|enter the captcha|wrong captcha|captcha.*incorrect/i;
+  new MutationObserver(() => {
+    if (!lastSample) return;
+    for (const el of document.querySelectorAll('.alert, .alert-danger, .error, .invalid-feedback')) {
+      if (CAPTCHA_ERR_RE.test(el.textContent || '')) {
+        if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
+        lastSample = null;   // wrong answer — leave verified=false
+        return;
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
   // ─── Main solve loop ───────────────────────────────────────────────────────
   async function runLoop() {
@@ -812,36 +871,19 @@ Requirements:
         return;
       }
       const result = sol.text;
-      // Visible diagnostics: chars read + confidence.
       console.log(`[Inkwell] solve: chars=${sol.n} text="${result}" conf=${(sol.conf*100|0)}%`);
 
       if (!autosolveActive) return;
 
-      // Track the best 5-char read seen this round (for the fallback).
-      const isFive = result && result.length === 5;
-      if (isFive && (!best || sol.conf > best.conf)) best = { text: result, conf: sol.conf };
+      // ALWAYS submit. The user wants every captcha autofilled — no skipping,
+      // no waiting for high confidence. If the read isn't 5 chars we still
+      // submit what we have (HOTH will reject it, fresh code appears, and the
+      // loop tries again automatically). Every accepted solve gets saved as
+      // a verified-correct training pair (see captureSample).
+      const corrected = result || '';
+      captureSample(imgEl, corrected, sol.conf);
 
-      // Confidence gate. HOTH needs exactly 5 chars. Submit only when the
-      // model is confident enough that the answer is almost certainly right;
-      // otherwise pull a fresh code (free) and try again. After MAX_REFRESH
-      // refreshes, fall back to the best read so we always make progress.
-      let corrected = null;
-      if (isFive && sol.conf >= SUBMIT_CONF) {
-        corrected = result;
-      } else if (refreshCount >= MAX_REFRESH && best && best.conf >= FALLBACK_CONF) {
-        corrected = best.text;
-        console.log(`[Inkwell] fallback submit "${corrected}" (${(best.conf*100|0)}%) after ${refreshCount} refreshes`);
-      }
-
-      if (corrected === null) {
-        refreshCount++;
-        setStatus(`Reading… (${Math.round(sol.conf * 100)}%) · new code ${refreshCount}`, '#ffaa00');
-        refreshCaptcha();
-        scheduleNext(1100);
-        return;
-      }
-      refreshCount = 0; best = null;   // committing — reset for next captcha
-      setStatus(`Solved: ${corrected}  (${Math.round(sol.conf * 100)}%)`, '#2DD4BF');
+      setStatus(`Autofill: ${corrected || '?'}  (${Math.round(sol.conf * 100)}%)`, '#2DD4BF');
 
       const inputEl = document.querySelector(inputSelector);
       if (inputEl) {
@@ -1093,9 +1135,21 @@ Requirements:
   }
 
   // ─── Listen for messages from popup ───────────────────────────────────────
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'START_AUTOSOLVE') startAutosolve(false);
     if (msg.type === 'STOP_AUTOSOLVE')  stopAutosolve();
+    if (msg.type === 'EXPORT_SAMPLES') {
+      chrome.storage.local.get([SAMPLES_KEY], (res) => {
+        const arr = res[SAMPLES_KEY] || [];
+        const verified = arr.filter(s => s.verified);
+        sendResponse({ total: arr.length, verified: verified.length, samples: verified });
+      });
+      return true;  // async response
+    }
+    if (msg.type === 'CLEAR_SAMPLES') {
+      chrome.storage.local.set({ [SAMPLES_KEY]: [] }, () => sendResponse({ ok: true }));
+      return true;
+    }
   });
 
   // ─── Init ─────────────────────────────────────────────────────────────────

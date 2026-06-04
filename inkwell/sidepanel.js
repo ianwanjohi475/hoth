@@ -447,6 +447,56 @@ const ridgeStartBtn      = $('ridgeStartBtn');
 const ridgeSaveBtn       = $('ridgeSaveBtn');
 const ridgeDot           = $('ridgeDot');
 const ridgeStatusText    = $('ridgeStatusText');
+const samplesDot         = $('samplesDot');
+const samplesStatusText  = $('samplesStatusText');
+const exportSamplesBtn   = $('exportSamplesBtn');
+const clearSamplesBtn    = $('clearSamplesBtn');
+
+// ── Self-labeling collector UI ──
+async function refreshSampleCount() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tabs[0]) return;
+  chrome.tabs.sendMessage(tabs[0].id, { type: 'EXPORT_SAMPLES' }, (resp) => {
+    if (chrome.runtime.lastError || !resp) {
+      samplesStatusText.textContent = 'Collector active on HOTH writer pages';
+      return;
+    }
+    samplesStatusText.textContent =
+      `${resp.verified} verified · ${resp.total} total samples collected`;
+    samplesDot.className = 'info-dot ' + (resp.verified > 0 ? 'dot-green' : 'dot-grey');
+  });
+}
+refreshSampleCount();
+setInterval(refreshSampleCount, 5000);
+
+exportSamplesBtn?.addEventListener('click', async () => {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tabs[0]) return;
+  chrome.tabs.sendMessage(tabs[0].id, { type: 'EXPORT_SAMPLES' }, (resp) => {
+    if (chrome.runtime.lastError || !resp) {
+      alert('Open a HOTH writer page first, then export.');
+      return;
+    }
+    if (!resp.verified) {
+      alert('No verified samples yet. Run autosolve on HOTH and let HOTH accept some submissions first.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(resp.samples, null, 0)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inkwell-samples-${resp.verified}-${Date.now()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+});
+
+clearSamplesBtn?.addEventListener('click', async () => {
+  if (!confirm('Clear all collected captcha samples?')) return;
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tabs[0]) return;
+  chrome.tabs.sendMessage(tabs[0].id, { type: 'CLEAR_SAMPLES' }, () => refreshSampleCount());
+});
 
 // ── Mask Ridge API key ────────────────────────────────────────────────────────
 function maskRidgeKey(key) {

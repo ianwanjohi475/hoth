@@ -279,6 +279,22 @@
         <span class="info-dot dot-grey" id="ridgeDot"></span>
         <span id="ridgeStatusText">Autosolve inactive</span>
       </div>
+
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+          <strong style="color:var(--text)">Training Data Collector</strong> · auto-saves
+          every captcha you solve. Verified pairs (HOTH accepted them) become
+          training data to retrain the model on real captchas.
+        </div>
+        <div class="info-row" style="margin-bottom:8px">
+          <span class="info-dot dot-green" id="samplesDot"></span>
+          <span id="samplesStatusText">0 verified samples collected</span>
+        </div>
+        <div class="quick-row">
+          <button class="btn btn-secondary btn-sm" id="exportSamplesBtn" style="flex:1">Export Samples (.json)</button>
+          <button class="btn btn-secondary btn-sm" id="clearSamplesBtn">Clear</button>
+        </div>
+      </div>
     </div>
   </div>
 
