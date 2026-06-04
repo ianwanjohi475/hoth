@@ -800,7 +800,7 @@ Requirements:
     chrome.storage.local.get([SAMPLES_KEY], (res) => {
       const arr = res[SAMPLES_KEY] || [];
       arr.push({ id, png, text, conf, verified: false, ts: Date.now() });
-      while (arr.length > 500) {
+      while (arr.length > 5000) {
         // drop oldest unverified first; if all verified, drop oldest overall
         const idx = arr.findIndex(s => !s.verified);
         arr.splice(idx >= 0 ? idx : 0, 1);

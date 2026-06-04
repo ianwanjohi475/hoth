@@ -283,13 +283,39 @@
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
           <strong style="color:var(--text)">Training Data Collector</strong> · auto-saves
-          every captcha you solve. Verified pairs (HOTH accepted them) become
+          every captcha you solve, live. Verified pairs (HOTH accepted them) become
           training data to retrain the model on real captchas.
         </div>
-        <div class="info-row" style="margin-bottom:8px">
-          <span class="info-dot dot-green" id="samplesDot"></span>
-          <span id="samplesStatusText">0 verified samples collected</span>
+
+        <!-- big live counters -->
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center">
+            <div id="samplesVerified" style="font-size:22px;font-weight:800;color:#2DD4BF;line-height:1">0</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Verified</div>
+          </div>
+          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center">
+            <div id="samplesTotal" style="font-size:22px;font-weight:800;color:var(--text);line-height:1">0</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Total</div>
+          </div>
         </div>
+
+        <!-- progress toward the 500 goal -->
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:4px">
+          <span id="samplesGoalLabel">Goal: 500 verified</span>
+          <span id="samplesPct">0%</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:10px">
+          <div id="samplesBar" style="height:100%;width:0%;background:linear-gradient(90deg,#14B8A6,#2DD4BF);transition:width .3s"></div>
+        </div>
+
+        <!-- live thumbnail feed of the most recent captchas -->
+        <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Latest captchas (live)</div>
+        <div id="samplesGallery" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:34px">
+          <span id="samplesEmpty" style="font-size:10px;color:var(--muted)">Turn on Autosolve on a HOTH page — images appear here as they’re collected.</span>
+        </div>
+        <span id="samplesDot" style="display:none"></span>
+        <span id="samplesStatusText" style="display:none"></span>
+
         <div class="quick-row">
           <button class="btn btn-secondary btn-sm" id="exportSamplesBtn" style="flex:1">Export Samples (.json)</button>
           <button class="btn btn-secondary btn-sm" id="clearSamplesBtn">Clear</button>

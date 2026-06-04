@@ -447,55 +447,87 @@ const ridgeStartBtn      = $('ridgeStartBtn');
 const ridgeSaveBtn       = $('ridgeSaveBtn');
 const ridgeDot           = $('ridgeDot');
 const ridgeStatusText    = $('ridgeStatusText');
-const samplesDot         = $('samplesDot');
-const samplesStatusText  = $('samplesStatusText');
 const exportSamplesBtn   = $('exportSamplesBtn');
 const clearSamplesBtn    = $('clearSamplesBtn');
+const samplesVerifiedEl  = $('samplesVerified');
+const samplesTotalEl     = $('samplesTotal');
+const samplesBar         = $('samplesBar');
+const samplesPct         = $('samplesPct');
+const samplesGallery     = $('samplesGallery');
+const samplesEmpty       = $('samplesEmpty');
 
-// ── Self-labeling collector UI ──
-async function refreshSampleCount() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tabs[0]) return;
-  chrome.tabs.sendMessage(tabs[0].id, { type: 'EXPORT_SAMPLES' }, (resp) => {
-    if (chrome.runtime.lastError || !resp) {
-      samplesStatusText.textContent = 'Collector active on HOTH writer pages';
-      return;
-    }
-    samplesStatusText.textContent =
-      `${resp.verified} verified · ${resp.total} total samples collected`;
-    samplesDot.className = 'info-dot ' + (resp.verified > 0 ? 'dot-green' : 'dot-grey');
-  });
+// ── Self-labeling collector UI (live) ──
+// Samples live in chrome.storage.local under 'inkwellSamples'. We read them
+// directly (works even when the sidebar isn't on a HOTH tab) and re-render
+// instantly whenever storage changes — true real-time tracking.
+const SAMPLES_KEY = 'inkwellSamples';
+const SAMPLE_GOAL = 500;
+
+function renderSamples(arr) {
+  arr = arr || [];
+  const verified = arr.filter(s => s.verified).length;
+  const total = arr.length;
+  samplesVerifiedEl.textContent = verified;
+  samplesTotalEl.textContent = total;
+  const pct = Math.min(100, Math.round(100 * verified / SAMPLE_GOAL));
+  samplesBar.style.width = pct + '%';
+  samplesPct.textContent = pct + '%';
+
+  // live thumbnail feed: newest 10 captchas, most recent first
+  const recent = arr.slice(-10).reverse();
+  if (!recent.length) {
+    if (samplesEmpty) samplesEmpty.style.display = '';
+    samplesGallery.querySelectorAll('.smp-thumb').forEach(n => n.remove());
+    return;
+  }
+  if (samplesEmpty) samplesEmpty.style.display = 'none';
+  samplesGallery.querySelectorAll('.smp-thumb').forEach(n => n.remove());
+  for (const s of recent) {
+    const box = document.createElement('div');
+    box.className = 'smp-thumb';
+    box.title = (s.verified ? 'verified · ' : 'pending · ') + (s.text || '?');
+    box.style.cssText =
+      'border:1.5px solid ' + (s.verified ? '#2DD4BF' : '#ffaa0066') +
+      ';border-radius:6px;overflow:hidden;width:64px;background:#0d1117;';
+    box.innerHTML =
+      `<img src="${s.png}" style="display:block;width:64px;height:auto">` +
+      `<div style="font-size:9px;text-align:center;color:${s.verified ? '#2DD4BF' : '#ffaa00'};` +
+      `font-family:monospace;padding:1px 0">${(s.text || '?')}</div>`;
+    samplesGallery.appendChild(box);
+  }
 }
-refreshSampleCount();
-setInterval(refreshSampleCount, 5000);
 
-exportSamplesBtn?.addEventListener('click', async () => {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tabs[0]) return;
-  chrome.tabs.sendMessage(tabs[0].id, { type: 'EXPORT_SAMPLES' }, (resp) => {
-    if (chrome.runtime.lastError || !resp) {
-      alert('Open a HOTH writer page first, then export.');
+function refreshSamples() {
+  chrome.storage.local.get([SAMPLES_KEY], (res) => renderSamples(res[SAMPLES_KEY]));
+}
+refreshSamples();
+
+// Instant updates — fires the moment the content script saves a new sample.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[SAMPLES_KEY]) renderSamples(changes[SAMPLES_KEY].newValue);
+});
+
+exportSamplesBtn?.addEventListener('click', () => {
+  chrome.storage.local.get([SAMPLES_KEY], (res) => {
+    const arr = res[SAMPLES_KEY] || [];
+    const verified = arr.filter(s => s.verified);
+    if (!verified.length) {
+      alert('No verified samples yet. Run Autosolve on HOTH and let it submit a few captchas that HOTH accepts first.');
       return;
     }
-    if (!resp.verified) {
-      alert('No verified samples yet. Run autosolve on HOTH and let HOTH accept some submissions first.');
-      return;
-    }
-    const blob = new Blob([JSON.stringify(resp.samples, null, 0)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(verified)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `inkwell-samples-${resp.verified}-${Date.now()}.json`;
+    a.download = `inkwell-samples-${verified.length}-${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 });
 
-clearSamplesBtn?.addEventListener('click', async () => {
+clearSamplesBtn?.addEventListener('click', () => {
   if (!confirm('Clear all collected captcha samples?')) return;
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tabs[0]) return;
-  chrome.tabs.sendMessage(tabs[0].id, { type: 'CLEAR_SAMPLES' }, () => refreshSampleCount());
+  chrome.storage.local.set({ [SAMPLES_KEY]: [] }, refreshSamples);
 });
 
 // ── Mask Ridge API key ────────────────────────────────────────────────────────

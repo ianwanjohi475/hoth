@@ -4,7 +4,7 @@
   "short_name": "Inkwell",
   "version": "1.0.0",
   "description": "Sidebar suite for thehoth.com/writer — watches for Edit assignments, detects spintax errors, auto-writes articles with Groq, and auto-solves CAPTCHAs.",
-  "permissions": ["storage", "tabs", "scripting", "debugger", "activeTab", "sidePanel"],
+  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting", "debugger", "activeTab", "sidePanel"],
   "host_permissions": [
     "https://www.thehoth.com/*",
     "https://api.emailjs.com/*",
