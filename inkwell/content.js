@@ -822,11 +822,12 @@ Requirements:
       scheduleNext(500);
 
     } catch (err) {
-      // Silent retry — the overlay never spells out API errors. The catch
-      // simply schedules the next tick and the loop keeps trying. Matches
-      // the original extension's behaviour exactly.
-      setStatus('Retrying...', '#ffaa00');
-      scheduleNext(1000);
+      // Show the real reason so failures are diagnosable instead of a blind
+      // "Retrying...". Full detail is also in the service-worker console.
+      const reason = (err && err.message ? err.message : 'unknown').slice(0, 60);
+      console.warn('[Inkwell] solve failed:', err && err.message);
+      setStatus('Retry · ' + reason, '#ffaa00');
+      scheduleNext(1500);
     }
   }
 

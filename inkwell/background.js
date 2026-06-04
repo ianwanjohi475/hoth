@@ -265,16 +265,6 @@ const GEMINI_MODELS = [
   'gemini-3.5-flash',        // current model per the official docs
   'gemini-flash-latest',     // alias fallback if the explicit ID is unavailable
 ];
-
-// Disable safety-filter refusals. Captcha images sometimes trip the
-// "automation-bypass" heuristic and the model returns empty with
-// finishReason: SAFETY. We're OCRing colored text, nothing harmful.
-const GEMINI_SAFETY = [
-  { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-];
 let _geminiModel = null; // cached working model id for this service-worker life
 
 const CAPTCHA_PROMPT =
@@ -294,25 +284,19 @@ function looksLikeGeminiKey(k) {
   return typeof k === 'string' && (k.startsWith('AQ.') || k.startsWith('AIza'));
 }
 
-// ONE clean Gemini call.
-// • maxOutputTokens 8192 — generous enough that thinking tokens (which the
-//   docs say count toward output budget on 3.5 Flash) can't starve the
-//   5-character answer.
-// • safetySettings BLOCK_NONE — captcha images sometimes trip the
-//   "automation-bypass" heuristic and the model returns empty with
-//   finishReason: SAFETY. We're OCRing coloured text, nothing harmful.
-// • Header auth (x-goog-api-key) — current docs standard, works with the
-//   newer AQ.* key format.
-// • Image part FIRST, text prompt AFTER — explicit docs best practice for
-//   single-image + text prompts.
+// ONE clean Gemini call — matched to the official REST examples in the docs.
+// • Auth via ?key= query param — exactly what every REST curl example in the
+//   Gemini docs uses (and the form the AQ.* key was issued for).
+// • maxOutputTokens 8192 — generous so thinking tokens (which count toward
+//   the output budget on 3.5 Flash) can't starve the 5-character answer.
+// • Image part FIRST, text prompt AFTER — docs best practice.
+// • NO safetySettings — BLOCK_NONE is rejected (HTTP 400) on non-allowlisted
+//   accounts, which would fail every request. Left out entirely.
 async function callGeminiModel(model, rawBase64, apiKey) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{
         parts: [
@@ -320,7 +304,6 @@ async function callGeminiModel(model, rawBase64, apiKey) {
           { text: CAPTCHA_PROMPT },
         ],
       }],
-      safetySettings: GEMINI_SAFETY,
       generationConfig: {
         temperature: 0,
         topP: 1,
@@ -332,6 +315,7 @@ async function callGeminiModel(model, rawBase64, apiKey) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err?.error?.message || `Gemini ${res.status}`;
+    console.error(`[Inkwell] Gemini ${model} HTTP ${res.status}:`, msg);
     const e = new Error(msg);
     // Surface model-not-found so the cascade can try the next id.
     e.modelMissing = res.status === 404 ||
