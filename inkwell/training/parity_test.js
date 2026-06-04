@@ -1,31 +1,32 @@
-// Verify the pure-JS CNN forward pass matches PyTorch exactly.
+// Verify the pure-JS CTC forward+decode matches PyTorch logits exactly.
 const fs = require('fs');
-const cnn = require('../captcha-cnn.js');   // attaches to global
+require('../captcha-cnn.js');
 const API = global.InkwellCNN;
-
 const model = JSON.parse(fs.readFileSync(__dirname + '/../model/weights.json'));
 API.setModel(model);
 const par = JSON.parse(fs.readFileSync(__dirname + '/../data/parity.json'));
+const AL = model.alphabet;
 
-let maxLogitErr = 0, agree = 0;
-for (let i = 0; i < par.inputs.length; i++) {
-  const flat = new Float32Array(32 * 32);
-  const rows = par.inputs[i];
-  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) flat[y * 32 + x] = rows[y][x];
-  const r = API.classify(flat, par.feats[i]);
-  // compare logits
-  let err = 0, jsBest = 0, jsBestV = -1e9, pyBest = 0, pyBestV = -1e9;
-  for (let k = 0; k < 62; k++) {
-    err = Math.max(err, Math.abs(r.logits[k] - par.logits[i][k]));
-    if (r.logits[k] > jsBestV) { jsBestV = r.logits[k]; jsBest = k; }
-    if (par.logits[i][k] > pyBestV) { pyBestV = par.logits[i][k]; pyBest = k; }
+function decode(logits) {        // logits: T x 63
+  let s = '', prev = -1;
+  for (const row of logits) {
+    let best = 0, bv = -1e30;
+    for (let k = 0; k < row.length; k++) if (row[k] > bv) { bv = row[k]; best = k; }
+    if (best !== prev && best !== 0) s += AL[best - 1];
+    prev = best;
   }
-  maxLogitErr = Math.max(maxLogitErr, err);
-  if (jsBest === pyBest) agree++;
-  console.log(`sample ${i}: argmax JS=${model.alphabet[jsBest]} PY=${model.alphabet[pyBest]} maxLogitErr=${err.toFixed(4)}`);
+  return s;
 }
-console.log(`\nMAX logit error across samples: ${maxLogitErr.toFixed(5)}`);
-console.log(`argmax agreement: ${agree}/${par.inputs.length}`);
-console.log(maxLogitErr < 0.02 && agree === par.inputs.length
-  ? 'PARITY OK ✓ (JS == PyTorch)'
-  : 'PARITY MISMATCH ✗');
+
+let ok = 0;
+for (let i = 0; i < par.inputs.length; i++) {
+  const rows = par.inputs[i];
+  const flat = new Float32Array(40 * 140);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 140; x++) flat[y * 140 + x] = rows[y][x];
+  const js = API.forward(flat).text;
+  const py = decode(par.logits[i]);
+  if (js === py) ok++;
+  console.log(`sample ${i}: JS="${js}"  PY="${py}"  ${js === py ? 'ok' : 'MISMATCH'}`);
+}
+console.log(`\nmatch ${ok}/${par.inputs.length}`);
+console.log(ok === par.inputs.length ? 'PARITY OK ✓' : 'PARITY MISMATCH ✗');

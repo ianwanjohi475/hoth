@@ -29,6 +29,19 @@ IMG_W, IMG_H = 230, 70
 BG = (237, 237, 237)
 N_CHARS = 5
 
+# HOTH-like palette: dark, saturated colours that repeat across characters.
+PALETTE = [
+    (40, 40, 130),    # navy
+    (30, 90, 40),     # dark green
+    (110, 100, 25),   # olive
+    (120, 30, 35),    # maroon
+    (95, 35, 110),    # purple
+    (25, 95, 100),    # teal
+    (110, 60, 25),    # brown
+    (60, 60, 60),     # near-black grey
+    (150, 35, 80),    # magenta-ish
+]
+
 def _vivid_color():
     """A saturated, DARK colour like HOTH's character colours.
     Kept dark (low value) so a simple brightness threshold cleanly
@@ -54,7 +67,9 @@ def _hsv_to_rgb(h, s, v):
     return (int(r*255), int(g*255), int(b*255))
 
 def _draw_wavy_line(draw, color):
-    """A thin wavy pastel line across the width, like HOTH decoration."""
+    """A thin wavy line across the width, like HOTH decoration. Colour is
+    chosen by the caller; some are dark enough to survive binarisation so
+    the model learns to ignore thin line strokes."""
     y0 = random.uniform(10, IMG_H - 10)
     amp = random.uniform(3, 9)
     period = random.uniform(40, 110)
@@ -67,6 +82,10 @@ def _draw_wavy_line(draw, color):
         x += 3
     draw.line(pts, fill=color, width=random.choice([1, 1, 2]))
 
+def _line_color():
+    # 70% pale (removed by binarisation), 30% darker/saturated (survives)
+    return _pastel_color() if random.random() < 0.7 else random.choice(PALETTE)
+
 def generate():
     """Return (PIL.Image RGB, label string of length N_CHARS)."""
     img = Image.new("RGB", (IMG_W, IMG_H), BG)
@@ -77,25 +96,20 @@ def generate():
     # decoration lines UNDER the characters
     d = ImageDraw.Draw(img)
     for _ in range(random.randint(1, 3)):
-        _draw_wavy_line(d, _pastel_color())
+        _draw_wavy_line(d, _line_color())
 
     # place characters left to right with slight overlap + jitter
     x = random.uniform(8, 16)
     base_size = random.randint(38, 46)
-    # Distinct, well-separated colours (one per char) — like HOTH. Evenly
-    # spaced hues with jitter guarantees the colour-cluster segmentation can
-    # tell the characters apart.
-    hue0 = random.random()
-    hues = [(hue0 + i / N_CHARS + random.uniform(-0.05, 0.05)) % 1.0
-            for i in range(N_CHARS)]
-    random.shuffle(hues)
     for ci, ch in enumerate(chars):
         font = ImageFont.truetype(random.choice(FONTS), base_size)
         # render glyph on its own transparent layer so we can rotate it
         tmp = Image.new("RGBA", (base_size * 2, base_size * 2), (0, 0, 0, 0))
         td = ImageDraw.Draw(tmp)
-        col = _hsv_to_rgb(hues[ci], random.uniform(0.6, 1.0),
-                          random.uniform(0.40, 0.66))
+        # HOTH reuses a small palette — colours REPEAT and adjacent letters
+        # often share one. Pick each char's colour independently from the
+        # palette so the model/segmenter learn to handle same-colour neighbours.
+        col = random.choice(PALETTE)
         td.text((base_size * 0.5, base_size * 0.3), ch, font=font, fill=col + (255,))
         bbox = tmp.getbbox()
         if bbox is None:
@@ -126,13 +140,15 @@ def generate():
                        "x1": px + gx1, "y1": iy + gy1,
                        "cx": px + (gx0 + gx1) / 2.0,
                        "local": local})
-        # advance x — mostly touching, only slight overlap (like HOTH)
-        x += glyph.width * random.uniform(0.88, 1.02)
+        # advance x — like HOTH: mostly small GAPS between letters, only
+        # occasionally just touching. Less overlap => fewer same-colour
+        # merges => cleaner segmentation.
+        x += glyph.width * random.uniform(0.99, 1.18)
 
     # a decoration line OVER the characters sometimes
     if random.random() < 0.6:
         d = ImageDraw.Draw(img)
-        _draw_wavy_line(d, _pastel_color())
+        _draw_wavy_line(d, _line_color())
 
     label = "".join(c["ch"] for c in gt)
     return img, label, gt
