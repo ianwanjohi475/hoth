@@ -645,6 +645,27 @@ Requirements:
   let overlayBtn      = null;
   let statusEl        = null;
 
+  // Click "get a new code" to fetch a fresh captcha (free on HOTH). Falls
+  // back to nothing if the link isn't found.
+  function refreshCaptcha() {
+    const link = document.querySelector('#writercaptcha a[href*="writer"]')
+              || document.querySelector('#writercaptcha a')
+              || [...document.querySelectorAll('a')].find(a => /get a new code/i.test(a.textContent || ''));
+    if (link) { try { link.click(); } catch (_) {} }
+  }
+
+  // ── Local CNN model loader (one-time, from the bundled weights) ──
+  let _cnnLoading = null;
+  async function ensureCNN() {
+    if (!window.InkwellCNN) return;             // script not present
+    if (window.InkwellCNN.ready) return;
+    if (_cnnLoading) return _cnnLoading;
+    _cnnLoading = window.InkwellCNN
+      .loadModel(chrome.runtime.getURL('model/weights.json'))
+      .catch(e => console.warn('[Inkwell] CNN model load failed:', e));
+    return _cnnLoading;
+  }
+
   // ─── Inject overlay button ─────────────────────────────────────────────────
   function injectOverlay() {
     if (document.getElementById('rns-overlay')) return;
@@ -756,30 +777,35 @@ Requirements:
       }
 
       setStatus('CAPTCHA found! Reading...', '#00ccff');
-      const base64 = await imageToBase64(imgEl);
-      setStatus('Solving...', '#00ccff');
 
-      const result = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage(
-          { type: 'SOLVE_CAPTCHA', imageBase64: base64, apiKey: ridgeApiKey },
-          (response) => {
-            if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-            if (!response) return reject(new Error('No response from background'));
-            if (!response.success) return reject(new Error(response.error));
-            resolve(response.text);
-          }
-        );
-      });
+      // ── Local CNN solve (no API, no quota, no limits) ──
+      await ensureCNN();
+      const sol = window.InkwellCNN && window.InkwellCNN.ready
+        ? window.InkwellCNN.solveImage(imgEl)
+        : { text: '', conf: 0, n: 0 };
+      const result = sol.text;
+      if (!result || result.length < 4) {
+        // segmentation produced nothing usable — refresh and move on
+        setStatus('Reading… (retry)', '#ffaa00');
+        scheduleNext(900);
+        return;
+      }
 
       if (!autosolveActive) return;
 
-      // Trust Gemini's answer verbatim. The old geometric case-corrector
-      // measured pixel heights to guess case, but the decorative wavy lines
-      // in HOTH captchas throw the measurement off and it INTRODUCED case
-      // errors (e.g. vVCHH → VVCHH). Gemini reads case well on its own, so
-      // we no longer post-process the answer.
+      // Confidence / length gate: HOTH needs exactly 5 chars. If the read is
+      // the wrong length or low-confidence, fetch a fresh captcha (free) and
+      // try again instead of submitting a likely-wrong answer.
+      const MIN_CONF = 0.55;
+      if (result.length !== 5 || sol.conf < MIN_CONF) {
+        setStatus(`Low confidence (${Math.round(sol.conf * 100)}%) — new code`, '#ffaa00');
+        refreshCaptcha();
+        scheduleNext(1400);
+        return;
+      }
+
       const corrected = result;
-      setStatus(`Solved: ${corrected}`, '#2DD4BF');
+      setStatus(`Solved: ${corrected}  (${Math.round(sol.conf * 100)}%)`, '#2DD4BF');
 
       const inputEl = document.querySelector(inputSelector);
       if (inputEl) {
