@@ -262,10 +262,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Google rotates model names. After the first solve only ONE call is made.
 
 const GEMINI_MODELS = [
-  'gemini-3.5-flash',        // current model used throughout the official docs
-  'gemini-flash-latest',     // alias that always points to the newest flash
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
+  'gemini-3.5-flash',        // current model per the official docs
+  'gemini-flash-latest',     // alias fallback if the explicit ID is unavailable
+];
+
+// Disable safety-filter refusals. Captcha images sometimes trip the
+// "automation-bypass" heuristic and the model returns empty with
+// finishReason: SAFETY. We're OCRing colored text, nothing harmful.
+const GEMINI_SAFETY = [
+  { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
 ];
 let _geminiModel = null; // cached working model id for this service-worker life
 
@@ -286,24 +294,18 @@ function looksLikeGeminiKey(k) {
   return typeof k === 'string' && (k.startsWith('AQ.') || k.startsWith('AIza'));
 }
 
-// One raw Gemini REST call. `noThink` controls whether we send
-// thinkingConfig (some models reject the field) and how big the output
-// budget is.
-async function callGeminiModel(model, rawBase64, apiKey, noThink) {
-  // Per the official docs, the API key goes in the x-goog-api-key header
-  // (current standard; works with the newer AQ.* key format). Body uses the
-  // documented snake_case fields inline_data / mime_type, which the v1beta
-  // REST endpoint accepts.
-  const generationConfig = {
-    temperature: 0,
-    topP: 1,
-    maxOutputTokens: noThink ? 64 : 512,
-  };
-  // Gemini 2.5+ runs "thinking" by default, which eats the output-token
-  // budget and returns empty text. thinkingBudget:0 disables it. We send it
-  // first; if a model rejects the field we retry without it (see callGemini).
-  if (noThink) generationConfig.thinkingConfig = { thinkingBudget: 0 };
-
+// ONE clean Gemini call.
+// • maxOutputTokens 8192 — generous enough that thinking tokens (which the
+//   docs say count toward output budget on 3.5 Flash) can't starve the
+//   5-character answer.
+// • safetySettings BLOCK_NONE — captcha images sometimes trip the
+//   "automation-bypass" heuristic and the model returns empty with
+//   finishReason: SAFETY. We're OCRing coloured text, nothing harmful.
+// • Header auth (x-goog-api-key) — current docs standard, works with the
+//   newer AQ.* key format.
+// • Image part FIRST, text prompt AFTER — explicit docs best practice for
+//   single-image + text prompts.
+async function callGeminiModel(model, rawBase64, apiKey) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
@@ -313,14 +315,17 @@ async function callGeminiModel(model, rawBase64, apiKey, noThink) {
     },
     body: JSON.stringify({
       contents: [{
-        // Docs best practice: with a single image + text, put the image part
-        // FIRST and the text prompt AFTER it.
         parts: [
           { inline_data: { mime_type: 'image/png', data: rawBase64 } },
           { text: CAPTCHA_PROMPT },
         ],
       }],
-      generationConfig,
+      safetySettings: GEMINI_SAFETY,
+      generationConfig: {
+        temperature: 0,
+        topP: 1,
+        maxOutputTokens: 8192,
+      },
     }),
   });
 
@@ -328,73 +333,49 @@ async function callGeminiModel(model, rawBase64, apiKey, noThink) {
     const err = await res.json().catch(() => ({}));
     const msg = err?.error?.message || `Gemini ${res.status}`;
     const e = new Error(msg);
-    // Wrong/unavailable model id → try the next one in the list.
+    // Surface model-not-found so the cascade can try the next id.
     e.modelMissing = res.status === 404 ||
       /is not found|not supported for|does not exist|do not have access|call list ?models/i.test(msg);
-    // Model rejected thinkingConfig → retry same model without it.
-    e.thinkingUnsupported = noThink && /thinking|thinkingconfig|thinking_config/i.test(msg);
     throw e;
   }
 
   const json = await res.json();
   const cand = json?.candidates?.[0];
-  // Join all text parts (defensive — usually one).
+  // Join all parts defensively (usually one).
   let text = (cand?.content?.parts || []).map(p => p?.text || '').join('').trim();
 
-  if (!text) {
-    // Empty output — usually thinking ate the budget. Signal a no-think retry.
-    const e = new Error(`empty output (finishReason=${cand?.finishReason || '?'})`);
-    e.emptyOutput = true;
-    throw e;
-  }
-
-  // Gemini may wrap in quotes/backticks/tags — strip to alphanumerics, keep case.
+  // Gemini may wrap in <ans>…</ans> or quotes — strip to alphanumerics,
+  // keep case verbatim (HOTH captchas are case-sensitive).
   const tag = text.match(/<ans>\s*([^<\s]+)\s*<\/ans>/i);
   if (tag) text = tag[1];
   text = text.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
   if (text.length === 0) {
-    const e = new Error('no alphanumeric in output');
-    e.emptyOutput = true;
-    throw e;
+    throw new Error(`empty output (finishReason=${cand?.finishReason || '?'})`);
   }
   return text;
-}
-
-// Calls a model with thinking disabled; if that model rejects thinkingConfig
-// or returns empty, retries the same model WITHOUT thinkingConfig and a
-// larger token budget.
-async function callGemini(model, rawBase64, apiKey) {
-  try {
-    return await callGeminiModel(model, rawBase64, apiKey, true);
-  } catch (e) {
-    if (e.thinkingUnsupported || e.emptyOutput) {
-      return await callGeminiModel(model, rawBase64, apiKey, false);
-    }
-    throw e;
-  }
 }
 
 async function solveCaptcha(imageBase64, apiKey) {
   const key = looksLikeGeminiKey(apiKey) ? apiKey : RIDGE_DEFAULT_KEY;
   const rawBase64 = (imageBase64 || '').replace(/^data:image\/[^;]+;base64,/i, '');
 
-  // Use the cached working model first, if we found one already.
+  // Use the cached working model first (after first solve this is just 1 call).
   if (_geminiModel) {
-    return await callGemini(_geminiModel, rawBase64, key);
+    return await callGeminiModel(_geminiModel, rawBase64, key);
   }
 
-  // First solve of this session: find a model id the account actually serves.
+  // First solve of this SW lifetime: probe the short model list.
   let lastErr = null;
   for (const model of GEMINI_MODELS) {
     try {
-      const result = await callGemini(model, rawBase64, key);
-      _geminiModel = model; // cache the winner — every later solve is 1 call
+      const result = await callGeminiModel(model, rawBase64, key);
+      _geminiModel = model;
       console.log('[Inkwell] Gemini OCR using model:', model);
       return result;
     } catch (e) {
       lastErr = e;
-      if (e.modelMissing) continue;   // wrong model id — try the next one
-      throw e;                        // real error (auth, quota, network) — surface it
+      if (e.modelMissing) continue;  // wrong model id → try next
+      throw e;                       // real error (auth, quota, network) → surface
     }
   }
   throw lastErr || new Error('No working Gemini model found');
