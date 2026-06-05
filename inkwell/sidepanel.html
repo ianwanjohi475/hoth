@@ -299,27 +299,32 @@
           </div>
         </div>
 
-        <!-- progress toward the 500 goal -->
+        <!-- progress toward the collection goal (total images) -->
         <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:4px">
-          <span id="samplesGoalLabel">Goal: 500 verified</span>
+          <span id="samplesGoalLabel">Goal: 300 images collected</span>
           <span id="samplesPct">0%</span>
         </div>
         <div style="height:6px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:10px">
           <div id="samplesBar" style="height:100%;width:0%;background:linear-gradient(90deg,#14B8A6,#2DD4BF);transition:width .3s"></div>
         </div>
 
-        <!-- live thumbnail feed of the most recent captchas -->
+        <!-- export / clear — kept ABOVE the gallery so they're always visible -->
+        <div class="quick-row" style="margin-bottom:10px">
+          <button class="btn btn-green btn-sm" id="exportSamplesBtn" style="flex:2">⬇ Export Data (.json)</button>
+          <button class="btn btn-secondary btn-sm" id="clearSamplesBtn" style="flex:1">Clear</button>
+        </div>
+        <div id="exportHint" style="font-size:10px;color:var(--muted);margin-bottom:10px">
+          Exports ALL collected images to your Downloads folder as one file. No typing needed —
+          send me that file and I read &amp; label the captchas myself, then retrain.
+        </div>
+
+        <!-- live thumbnail feed of the most recent captchas (own scroll, can't push UI) -->
         <div style="font-size:10px;color:var(--muted);margin-bottom:4px">Latest captchas (live)</div>
-        <div id="samplesGallery" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:34px">
+        <div id="samplesGallery" style="display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto">
           <span id="samplesEmpty" style="font-size:10px;color:var(--muted)">Turn on Autosolve on a HOTH page — images appear here as they’re collected.</span>
         </div>
         <span id="samplesDot" style="display:none"></span>
         <span id="samplesStatusText" style="display:none"></span>
-
-        <div class="quick-row">
-          <button class="btn btn-secondary btn-sm" id="exportSamplesBtn" style="flex:1">Export Samples (.json)</button>
-          <button class="btn btn-secondary btn-sm" id="clearSamplesBtn">Clear</button>
-        </div>
       </div>
     </div>
   </div>

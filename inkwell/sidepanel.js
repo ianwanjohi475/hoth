@@ -461,7 +461,7 @@ const samplesEmpty       = $('samplesEmpty');
 // directly (works even when the sidebar isn't on a HOTH tab) and re-render
 // instantly whenever storage changes — true real-time tracking.
 const SAMPLES_KEY = 'inkwellSamples';
-const SAMPLE_GOAL = 500;
+const SAMPLE_GOAL = 300;   // total collected images to aim for before sending
 
 function renderSamples(arr) {
   arr = arr || [];
@@ -469,7 +469,9 @@ function renderSamples(arr) {
   const total = arr.length;
   samplesVerifiedEl.textContent = verified;
   samplesTotalEl.textContent = total;
-  const pct = Math.min(100, Math.round(100 * verified / SAMPLE_GOAL));
+  // Progress tracks TOTAL collected images (what we send for labeling),
+  // not verified — verified stays low until the model improves.
+  const pct = Math.min(100, Math.round(100 * total / SAMPLE_GOAL));
   samplesBar.style.width = pct + '%';
   samplesPct.textContent = pct + '%';
 
@@ -510,16 +512,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
 exportSamplesBtn?.addEventListener('click', () => {
   chrome.storage.local.get([SAMPLES_KEY], (res) => {
     const arr = res[SAMPLES_KEY] || [];
-    const verified = arr.filter(s => s.verified);
-    if (!verified.length) {
-      alert('No verified samples yet. Run Autosolve on HOTH and let it submit a few captchas that HOTH accepts first.');
+    if (!arr.length) {
+      alert('No captchas collected yet. Run Autosolve on a HOTH writer page first — images appear in the live feed as they are collected.');
       return;
     }
-    const blob = new Blob([JSON.stringify(verified)], { type: 'application/json' });
+    // Export ALL collected images (verified or not). Correct labels get
+    // applied later during training, so every image is useful.
+    const blob = new Blob([JSON.stringify(arr)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `inkwell-samples-${verified.length}-${Date.now()}.json`;
+    a.download = `inkwell-captchas-${arr.length}-${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
