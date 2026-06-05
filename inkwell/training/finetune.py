@@ -23,9 +23,10 @@ from PIL import Image
 import torch, torch.nn as nn
 import gen_captcha
 from preprocess import preprocess, IN_H, IN_W
-from train_cnn import (Net, ALPHABET, BLANK, greedy_decode, evaluate,
-                       augment, export, NCLS)
+from crnn import (CRNN, ALPHABET, BLANK, greedy_decode, evaluate,
+                  augment, export)
 
+OUT = "/home/user/hoth/inkwell/model/weights.json"
 DATA = "/home/user/hoth/inkwell/data"
 CHAR2IDX = {c: i for i, c in enumerate(ALPHABET)}
 N_CHARS = 5
@@ -108,13 +109,13 @@ def main():
     Xrv_t = torch.tensor(Xrv).unsqueeze(1)
     Yrv_t = torch.tensor(Yrv)
 
-    net = Net()
-    # Warm-start from the current model if a checkpoint exists (optional).
+    net = CRNN()
+    # Warm-start from a prior CRNN checkpoint if compatible (optional).
     try:
-        net.load_state_dict(torch.load(f"{DATA}/model.pt"))
-        print("warm-started from data/model.pt")
+        net.load_state_dict(torch.load(f"{DATA}/crnn.pt"))
+        print("warm-started from data/crnn.pt")
     except Exception:
-        print("training from scratch (no checkpoint to warm-start from)")
+        print("training CRNN from scratch")
 
     opt = torch.optim.Adam(net.parameters(), lr=1e-3)
     sched = torch.optim.lr_scheduler.StepLR(opt, step_size=5, gamma=0.5)
@@ -136,8 +137,8 @@ def main():
         print(f"ep {ep+1:2d}  loss {ls/N:.3f}  REAL-val char {rc*100:.1f}%  "
               f"FULL {rf*100:.1f}%  ({time.time()-t0:.0f}s)")
 
-    torch.save(net.state_dict(), f"{DATA}/model.pt")  # for future warm-starts
-    export(net)
+    torch.save(net.state_dict(), f"{DATA}/crnn.pt")  # for future warm-starts
+    export(net, OUT, DATA)
     print("Done. Reload the extension to use the retrained model.")
 
 

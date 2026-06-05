@@ -22,8 +22,27 @@
       c1: conv(obj.layers.c1), c2: conv(obj.layers.c2),
       c3: conv(obj.layers.c3), c4: conv(obj.layers.c4),
       head: fc(obj.layers.head), alphabet: obj.alphabet,
-      T: obj.T || 35,
+      T: obj.T || 35, hid: obj.hid || 128,
+      arch: obj.arch || 'cnn',
     };
+    if (obj.lstm) {
+      W.lstm = {
+        fwd: lstmDir(obj.lstm.wf_ih, obj.lstm.wf_hh, obj.lstm.bf_ih, obj.lstm.bf_hh),
+        bwd: lstmDir(obj.lstm.wb_ih, obj.lstm.wb_hh, obj.lstm.bb_ih, obj.lstm.bb_hh),
+      };
+    }
+  }
+  // Flatten one LSTM direction. PyTorch stacks gates as [i,f,g,o], each H rows.
+  // Pre-sum bias_ih + bias_hh into one bias (they're always added together).
+  function lstmDir(w_ih, w_hh, b_ih, b_hh) {
+    const fourH = w_ih.length, inC = w_ih[0].length, H = w_hh[0].length;
+    const Wih = new Float32Array(fourH * inC); let p = 0;
+    for (let r = 0; r < fourH; r++) for (let c = 0; c < inC; c++) Wih[p++] = w_ih[r][c];
+    const Whh = new Float32Array(fourH * H); p = 0;
+    for (let r = 0; r < fourH; r++) for (let c = 0; c < H; c++) Whh[p++] = w_hh[r][c];
+    const b = new Float32Array(fourH);
+    for (let r = 0; r < fourH; r++) b[r] = b_ih[r] + b_hh[r];
+    return { Wih, Whh, b, inC, H, fourH };
   }
   function conv(L) {
     const out = L.w.length, inC = L.w[0].length, k = L.w[0][0].length;
@@ -79,36 +98,88 @@
     return out;
   }
 
+  const sigmoid = (v) => 1 / (1 + Math.exp(-v));
+  // One bidirectional LSTM direction. seq: Float32Array T*C (row-major t,c).
+  // Returns Float32Array T*H of hidden states (in natural t order).
+  function lstmRun(seq, T, C, D, reverse) {
+    const H = D.H, fourH = D.fourH, Wih = D.Wih, Whh = D.Whh, b = D.b;
+    const out = new Float32Array(T * H);
+    const h = new Float32Array(H), c = new Float32Array(H), g = new Float32Array(fourH);
+    for (let s = 0; s < T; s++) {
+      const t = reverse ? (T - 1 - s) : s;
+      const xb = t * C;
+      for (let r = 0; r < fourH; r++) {
+        let acc = b[r];
+        const wi = r * C, wh = r * H;
+        for (let k = 0; k < C; k++) acc += Wih[wi + k] * seq[xb + k];
+        for (let k = 0; k < H; k++) acc += Whh[wh + k] * h[k];
+        g[r] = acc;
+      }
+      // gate order [i,f,g,o] each H
+      for (let j = 0; j < H; j++) {
+        const ig = sigmoid(g[j]), fg = sigmoid(g[H + j]),
+              cg = Math.tanh(g[2 * H + j]), og = sigmoid(g[3 * H + j]);
+        const cj = fg * c[j] + ig * cg;
+        c[j] = cj; h[j] = og * Math.tanh(cj);
+      }
+      const ob = t * H;
+      for (let j = 0; j < H; j++) out[ob + j] = h[j];
+    }
+    return out;
+  }
+
   // input: Float32Array IN_H*IN_W. Returns { text, conf }
   function forward(x) {
     let m = conv3x3relu(x, 40, 140, W.c1); m = maxpool(m, W.c1.out, 40, 140, 2, 2);  // 20x70
     m = conv3x3relu(m, 20, 70, W.c2);      m = maxpool(m, W.c2.out, 20, 70, 2, 2);    // 10x35
     m = conv3x3relu(m, 10, 35, W.c3);      m = maxpool(m, W.c3.out, 10, 35, 2, 1);    // 5x35
     m = conv3x3relu(m, 5, 35, W.c4);       m = maxpool(m, W.c4.out, 5, 35, 5, 1);     // 1x35
-    // m: C=96, H=1, W=T  -> feat[t][c] = m[c*T + t]
     const C = W.c4.out, T = W.T, K = W.head.out;
+
+    // Build per-timestep feature sequence: seq[t*C + c] = m[c*T + t]
+    const seq = new Float32Array(T * C);
+    for (let t = 0; t < T; t++) for (let c = 0; c < C; c++) seq[t * C + c] = m[c * T + t];
+
+    // BiLSTM (if present) -> per-timestep vector of size headIn (2*H or C)
+    let feats, FC;
+    if (W.lstm) {
+      const H = W.lstm.fwd.H;
+      const fo = lstmRun(seq, T, C, W.lstm.fwd, false);
+      const bo = lstmRun(seq, T, C, W.lstm.bwd, true);
+      FC = 2 * H;
+      feats = new Float32Array(T * FC);
+      for (let t = 0; t < T; t++) {
+        for (let j = 0; j < H; j++) feats[t * FC + j] = fo[t * H + j];
+        for (let j = 0; j < H; j++) feats[t * FC + H + j] = bo[t * H + j];
+      }
+    } else {
+      feats = seq; FC = C;
+    }
+
     let text = '', prev = -1, minConf = 1;
-    const feat = new Float32Array(C);
+    const logit = new Float32Array(K);
+    const allLogits = DEBUG_LOGITS ? [] : null;
     for (let t = 0; t < T; t++) {
-      for (let c = 0; c < C; c++) feat[c] = m[c * T + t];
-      // head logits
+      const fb = t * FC;
       let best = 0, bestv = -1e30;
-      const logit = new Float32Array(K);
       for (let k = 0; k < K; k++) {
-        let acc = W.head.b[k]; const wb = k * C;
-        for (let c = 0; c < C; c++) acc += feat[c] * W.head.w[wb + c];
+        let acc = W.head.b[k]; const wb = k * FC;
+        for (let c = 0; c < FC; c++) acc += feats[fb + c] * W.head.w[wb + c];
         logit[k] = acc; if (acc > bestv) { bestv = acc; best = k; }
       }
+      if (allLogits) allLogits.push(Array.from(logit));
       if (best !== prev && best !== BLANK) {
         let sum = 0; for (let k = 0; k < K; k++) sum += Math.exp(logit[k] - bestv);
         const conf = 1 / sum;
         if (conf < minConf) minConf = conf;
-        text += W.alphabet[best - 1];   // token shift: blank=0, char=idx+1
+        text += W.alphabet[best - 1];
       }
       prev = best;
     }
-    return { text, conf: text ? minConf : 0 };
+    return { text, conf: text ? minConf : 0, logits: allLogits };
   }
+  let DEBUG_LOGITS = false;
+  function setDebugLogits(v) { DEBUG_LOGITS = v; }
 
   // ---- preprocessing (mirror of preprocess.py) ----
   function preprocessRGBA(rgba, w, h) {
@@ -193,6 +264,7 @@
 
   root.InkwellCNN = {
     loadModel, setModel, forward, preprocessRGBA, solveRGBA, solveImage,
+    setDebugLogits,
     get ready() { return !!W; },
   };
 })(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : global));
