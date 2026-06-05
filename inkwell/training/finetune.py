@@ -29,9 +29,9 @@ from train_cnn import (Net, ALPHABET, BLANK, greedy_decode, evaluate,
 DATA = "/home/user/hoth/inkwell/data"
 CHAR2IDX = {c: i for i, c in enumerate(ALPHABET)}
 N_CHARS = 5
-SYNTH_N = 40000          # fresh synthetic images mixed in each run
-REAL_REPEAT = 25         # how many times each real sample is duplicated
-EPOCHS = 14
+SYNTH_N = 12000          # fewer synthetic so real dominates
+REAL_REPEAT = 80         # heavy real weighting for small batches
+EPOCHS = 18
 
 
 def load_real(paths):
