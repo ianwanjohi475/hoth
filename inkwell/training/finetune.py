@@ -32,7 +32,7 @@ CHAR2IDX = {c: i for i, c in enumerate(ALPHABET)}
 N_CHARS = 5
 SYNTH_N = 10000         # less synth, more real for final
 REAL_REPEAT = 18        # 2148 * 18 = 38k real-augmented
-EPOCHS = 16
+EPOCHS = 10
 
 
 def load_real(paths):
@@ -122,6 +122,7 @@ def main():
     ctc = nn.CTCLoss(blank=BLANK, zero_infinity=True)
     bs, T, N = 256, 35, Xtr_t.shape[0]
     t0 = time.time()
+    best_full = -1.0
     for ep in range(EPOCHS):
         net.train(); pm = torch.randperm(N); ls = 0
         for i in range(0, N, bs):
@@ -134,11 +135,17 @@ def main():
             opt.zero_grad(); loss.backward(); opt.step(); ls += loss.item() * B
         sched.step()
         rc, rf = evaluate(net, Xrv_t, Yrv_t)
+        marker = ""
+        # Save best-by-FULL after every epoch so a mid-run kill keeps the best.
+        if rf > best_full:
+            best_full = rf
+            torch.save(net.state_dict(), f"{DATA}/crnn.pt")
+            export(net, OUT, DATA)
+            marker = "  *BEST -> saved"
         print(f"ep {ep+1:2d}  loss {ls/N:.3f}  REAL-val char {rc*100:.1f}%  "
-              f"FULL {rf*100:.1f}%  ({time.time()-t0:.0f}s)")
+              f"FULL {rf*100:.1f}%  ({time.time()-t0:.0f}s){marker}", flush=True)
 
-    torch.save(net.state_dict(), f"{DATA}/crnn.pt")  # for future warm-starts
-    export(net, OUT, DATA)
+    print(f"\nbest held-out FULL: {best_full*100:.1f}%  (model.pt + weights.json hold this best)")
     print("Done. Reload the extension to use the retrained model.")
 
 
