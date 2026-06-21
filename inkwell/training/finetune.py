@@ -30,8 +30,8 @@ OUT = "/home/user/hoth/inkwell/model/weights.json"
 DATA = "/home/user/hoth/inkwell/data"
 CHAR2IDX = {c: i for i, c in enumerate(ALPHABET)}
 N_CHARS = 5
-SYNTH_N = 8000          # less synth, more real
-REAL_REPEAT = 14        # 2303 * 14 = 32k real-augmented
+SYNTH_N = 8000
+REAL_REPEAT = 12
 EPOCHS = 12
 
 
