@@ -46,7 +46,7 @@ def main():
     net.eval()
 
     # Load hand-labeled set first (these are kept as-is, gold standard).
-    hand = json.load(open("/home/user/hoth/inkwell/data/big_labeled.json"))
+    hand = json.load(open("/home/user/hoth/inkwell/data/big_labeled_v2.json"))
     hand_hashes = set()
     for s in hand:
         b = base64.b64decode(s["png"].split(",",1)[-1])
