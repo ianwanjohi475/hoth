@@ -809,29 +809,50 @@ Requirements:
     });
     lastSample = { id, text };
     if (verifyTimer) clearTimeout(verifyTimer);
-    // If HOTH doesn't show its captcha-error within 4s, the submission was
-    // accepted -> mark this pair verified-correct (real ground truth).
-    verifyTimer = setTimeout(() => verifySample(id, true), 4000);
+    // Fallback: clear pending status after 8s if neither success nor failure
+    // signal was seen (e.g. navigation, tab switch). Sample stays unverified.
+    verifyTimer = setTimeout(() => { lastSample = null; verifyTimer = null; }, 8000);
   }
 
   function verifySample(id, ok) {
-    if (!ok || !id) return;
+    if (!id) return;
     chrome.storage.local.get([SAMPLES_KEY], (res) => {
       const arr = res[SAMPLES_KEY] || [];
       const s = arr.find(x => x.id === id);
-      if (s) { s.verified = true; chrome.storage.local.set({ [SAMPLES_KEY]: arr }); }
+      if (!s) return;
+      // ok=true: HOTH accepted (success message) -> verified ground truth
+      // ok=false: HOTH rejected (error message) -> flag as known-wrong
+      s.verified = !!ok;
+      s.rejected = !ok;
+      chrome.storage.local.set({ [SAMPLES_KEY]: arr });
     });
   }
 
-  // Watch for HOTH's captcha-error message. If it appears, the last sample
-  // was wrong -> don't mark verified (it stays as a low-value sample).
-  const CAPTCHA_ERR_RE = /must enter the captcha|enter the captcha|wrong captcha|captcha.*incorrect/i;
+  // Watch for HOTH's response messages. TWO distinct signals (you told me):
+  //  - "There are no articles to assign!" => captcha was CORRECT (success)
+  //  - "You must enter the captcha to take a new assignment" => WRONG (rejected)
+  // Either signal resolves the pending verification for the last submission.
+  const SUCCESS_RE = /there are no articles to assign|article.*assigned|successfully claimed/i;
+  const FAILURE_RE = /must enter the captcha|wrong captcha|captcha.*incorrect|invalid captcha/i;
   new MutationObserver(() => {
     if (!lastSample) return;
-    for (const el of document.querySelectorAll('.alert, .alert-danger, .error, .invalid-feedback')) {
-      if (CAPTCHA_ERR_RE.test(el.textContent || '')) {
+    // scan likely message containers + bare text nodes
+    const nodes = document.querySelectorAll('.alert, .alert-danger, .alert-info, .alert-warning, .alert-success, .error, .message, .flash, .notice, .invalid-feedback, p, div');
+    for (const el of nodes) {
+      const t = (el.textContent || '').slice(0, 300);
+      if (!t) continue;
+      if (SUCCESS_RE.test(t)) {
         if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
-        lastSample = null;   // wrong answer — leave verified=false
+        const id = lastSample.id; lastSample = null;
+        verifySample(id, true);
+        console.log('[Inkwell] HOTH accepted ✓ -> sample verified');
+        return;
+      }
+      if (FAILURE_RE.test(t)) {
+        if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
+        const id = lastSample.id; lastSample = null;
+        verifySample(id, false);
+        console.log('[Inkwell] HOTH rejected ✗ -> sample marked wrong');
         return;
       }
     }
