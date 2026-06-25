@@ -1,2 +1,3 @@
 data/
 training/__pycache__/
+node_modules/

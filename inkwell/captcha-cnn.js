@@ -156,9 +156,11 @@
       feats = seq; FC = C;
     }
 
-    let text = '', prev = -1, minConf = 1;
+    // Compute full log-softmax matrix (T x K) for beam decode + greedy backup
+    const logProbs = new Float32Array(T * K);
     const logit = new Float32Array(K);
     const allLogits = DEBUG_LOGITS ? [] : null;
+    let text = '', prev = -1, minConf = 1;
     for (let t = 0; t < T; t++) {
       const fb = t * FC;
       let best = 0, bestv = -1e30;
@@ -168,15 +170,126 @@
         logit[k] = acc; if (acc > bestv) { bestv = acc; best = k; }
       }
       if (allLogits) allLogits.push(Array.from(logit));
+      // log-softmax
+      let sumE = 0;
+      for (let k = 0; k < K; k++) sumE += Math.exp(logit[k] - bestv);
+      const logZ = bestv + Math.log(sumE);
+      const tb = t * K;
+      for (let k = 0; k < K; k++) logProbs[tb + k] = logit[k] - logZ;
+      // greedy track
       if (best !== prev && best !== BLANK) {
-        let sum = 0; for (let k = 0; k < K; k++) sum += Math.exp(logit[k] - bestv);
-        const conf = 1 / sum;
+        const conf = 1 / sumE;
         if (conf < minConf) minConf = conf;
         text += W.alphabet[best - 1];
       }
       prev = best;
     }
-    return { text, conf: text ? minConf : 0, logits: allLogits };
+    return { text, conf: text ? minConf : 0, logits: allLogits, logProbs, T, K };
+  }
+
+  // ---- Length-constrained CTC beam search ----
+  // Forces output to be exactly target_len non-blank chars. Fixes the
+  // 35%+ of greedy outputs that have wrong character count (the model
+  // emits 4 or 6 chars instead of 5 due to over-/under-merging repeats).
+  // logProbs: Float32Array T*K  (K=63: blank=0, then 62 alphabet classes)
+  // Returns { text, score } — text is exactly target_len long.
+  function beamDecodeLen(logProbs, T, K, target_len) {
+    const BEAM = 8, NEG = -1e30;
+    // beams[len] = Map of stateKey -> {prefix, lastC, score}
+    // stateKey: "prefix|lastC|blankEnd"
+    // We track separately blank-ending vs nonblank-ending states.
+    // Two parallel beams keyed by (prefix string, lastChar):
+    //   Bb: beam of states ending in blank
+    //   Bnb: beam of states ending in non-blank (lastC tells which)
+    // value: log-prob
+    let Bb = new Map(); Bb.set('|0', { prefix: '', lastC: 0, score: 0 });
+    let Bnb = new Map();
+    const ALPHA = W.alphabet;
+
+    const logSumExp = (a, b) => {
+      if (a === NEG) return b; if (b === NEG) return a;
+      const m = Math.max(a, b);
+      return m + Math.log1p(Math.exp(Math.min(a, b) - m));
+    };
+
+    for (let t = 0; t < T; t++) {
+      const tb = t * K;
+      const NBb = new Map(), NBnb = new Map();
+      const blankLP = logProbs[tb + 0];
+
+      // 1) Extend with blank: any state -> blank-ending state with same prefix
+      const addBlank = (st, score) => {
+        const key = st.prefix + '|0';
+        const prev = NBb.get(key);
+        const nscore = score + blankLP;
+        if (!prev) NBb.set(key, { prefix: st.prefix, lastC: 0, score: nscore });
+        else prev.score = logSumExp(prev.score, nscore);
+      };
+      for (const st of Bb.values()) addBlank(st, st.score);
+      for (const st of Bnb.values()) addBlank(st, st.score);
+
+      // 2) Extend with non-blank char c (1..K-1)
+      for (let c = 1; c < K; c++) {
+        const cLP = logProbs[tb + c];
+        if (cLP < -20) continue;  // skip vanishingly small probs
+        const ch = ALPHA[c - 1];
+
+        // From blank-ending: append new char (always)
+        for (const st of Bb.values()) {
+          if (st.prefix.length >= target_len) continue;
+          const np = st.prefix + ch;
+          const key = np + '|' + c;
+          const nscore = st.score + cLP;
+          const prev = NBnb.get(key);
+          if (!prev) NBnb.set(key, { prefix: np, lastC: c, score: nscore });
+          else prev.score = logSumExp(prev.score, nscore);
+        }
+        // From nonblank-ending with SAME char c: collapses (no new char)
+        for (const st of Bnb.values()) {
+          if (st.lastC === c) {
+            const key = st.prefix + '|' + c;
+            const nscore = st.score + cLP;
+            const prev = NBnb.get(key);
+            if (!prev) NBnb.set(key, { prefix: st.prefix, lastC: c, score: nscore });
+            else prev.score = logSumExp(prev.score, nscore);
+          } else {
+            if (st.prefix.length >= target_len) continue;
+            const np = st.prefix + ch;
+            const key = np + '|' + c;
+            const nscore = st.score + cLP;
+            const prev = NBnb.get(key);
+            if (!prev) NBnb.set(key, { prefix: np, lastC: c, score: nscore });
+            else prev.score = logSumExp(prev.score, nscore);
+          }
+        }
+      }
+
+      // Prune each beam to BEAM size by score
+      const prune = (m) => {
+        if (m.size <= BEAM) return m;
+        const arr = [...m.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, BEAM);
+        return new Map(arr);
+      };
+      Bb = prune(NBb); Bnb = prune(NBnb);
+    }
+
+    // Collect completed states (prefix.length === target_len)
+    let best = null;
+    const consider = (st) => {
+      if (st.prefix.length !== target_len) return;
+      if (!best || st.score > best.score) best = st;
+    };
+    for (const st of Bb.values()) consider(st);
+    for (const st of Bnb.values()) consider(st);
+
+    if (best) return { text: best.prefix, score: best.score };
+
+    // Fallback: take highest-scored, pad/trim to target_len
+    let fb = null;
+    for (const st of Bb.values()) if (!fb || st.score > fb.score) fb = st;
+    for (const st of Bnb.values()) if (!fb || st.score > fb.score) fb = st;
+    return { text: (fb ? fb.prefix : '').padEnd(target_len, '?').slice(0, target_len),
+             score: fb ? fb.score : NEG };
   }
   let DEBUG_LOGITS = false;
   function setDebugLogits(v) { DEBUG_LOGITS = v; }
@@ -230,23 +343,38 @@
     return out;
   }
 
-  // Test-time augmentation: solve the original + dilated + eroded image and
-  // vote. Prefer 5-char reads (HOTH length); among those take the highest
-  // minimum per-char confidence. A read agreed on by 2+ variants wins ties.
+  // Test-time augmentation + length-constrained beam decode.
+  // For each variant we run beam-search forced to exactly 5 chars (HOTH length),
+  // and also keep the greedy read. Beam fixes the ~35% of greedy reads that
+  // had wrong character count. Then we vote across variants.
   function solveRGBA(rgba, w, h) {
     const x = preprocessRGBA(rgba, w, h);
     if (!x) return { text: '', conf: 0, n: 0 };
+    const TARGET = 5;
     const variants = [forward(x), forward(morph(x, true)), forward(morph(x, false))];
     const tally = new Map();
-    for (const r of variants) if (r.text) {
-      const e = tally.get(r.text) || { text: r.text, votes: 0, conf: 0 };
-      e.votes++; if (r.conf > e.conf) e.conf = r.conf;
-      tally.set(r.text, e);
+    for (const r of variants) {
+      // greedy candidate (preferred when length already 5)
+      if (r.text) {
+        const e = tally.get(r.text) || { text: r.text, votes: 0, conf: 0, src: 'g' };
+        e.votes++; if (r.conf > e.conf) e.conf = r.conf;
+        tally.set(r.text, e);
+      }
+      // beam5 candidate (length-constrained)
+      if (r.logProbs && r.text.length !== TARGET) {
+        const bm = beamDecodeLen(r.logProbs, r.T, r.K, TARGET);
+        if (bm && bm.text) {
+          const conf = Math.exp(bm.score / TARGET);  // per-char geometric mean
+          const e = tally.get(bm.text) || { text: bm.text, votes: 0, conf: 0, src: 'b' };
+          e.votes++; if (conf > e.conf) e.conf = conf;
+          tally.set(bm.text, e);
+        }
+      }
     }
     const cand = [...tally.values()];
     if (!cand.length) return { text: '', conf: 0, n: 0 };
     cand.sort((a, b) => {
-      const fa = a.text.length === 5, fb = b.text.length === 5;
+      const fa = a.text.length === TARGET, fb = b.text.length === TARGET;
       if (fa !== fb) return fa ? -1 : 1;          // 5-char reads first
       if (a.votes !== b.votes) return b.votes - a.votes;  // more agreement
       return b.conf - a.conf;                     // then confidence
