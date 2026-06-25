@@ -647,14 +647,17 @@ Requirements:
 
   // ── Self-labeling collector ──
   // Every captcha we submit is stored in chrome.storage.local with its image
-  // (base64 PNG) and the text we entered. After submit, we watch for HOTH's
-  // "You must enter the captcha" error: if it does NOT appear within 4s, the
-  // submission was accepted -> the pair is real-world ground truth and gets
-  // flagged 'verified'. Verified pairs are the training data needed to fine-
-  // tune the model on real HOTH captchas (the only path to true ~100%).
+  // (base64 PNG) and the text we entered. HOTH's assignment form is a plain
+  // POST form, so submitting RELOADS the whole page. That means we cannot
+  // verify in the same page context — the result message only appears on the
+  // freshly-loaded page. So we persist a "pending verification" record to
+  // storage right before submit, and resolve it on the NEXT page load by
+  // scanning the reloaded page:
+  //   - "You must enter the captcha to take a new assignment" => WRONG (rejected)
+  //   - otherwise / "There are no articles to assign"          => CORRECT (verified)
+  // Verified pairs are the ground-truth training data for retraining.
   const SAMPLES_KEY = 'inkwellSamples';
-  let lastSample = null;        // { id, text } awaiting verification
-  let verifyTimer = null;
+  const PENDING_KEY = 'inkwellPendingVerify';   // { id, text, ts } across reloads
 
   // Click "get a new code" to fetch a fresh captcha (free on HOTH). Falls
   // back to nothing if the link isn't found.
@@ -745,8 +748,6 @@ Requirements:
   function startAutosolve(silent) {
     if (autosolveActive) return;
     autosolveActive = true;
-    lastSample = null;
-    if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
     chrome.storage.local.set({ autosolveEnabled: true });
     setOverlayStopMode();
     if (!silent) setStatus('Scanning for CAPTCHA...', '#2DD4BF');
@@ -791,15 +792,16 @@ Requirements:
     } catch (_) { return null; }
   }
 
-  // Save (image, text) as a pending sample. Capped at 500 entries so storage
-  // can't grow unbounded; oldest unverified samples drop out first.
+  // Save (image, text) as a sample and RETURN its id so the caller can mark it
+  // pending-verification right before submitting. Capped so storage can't grow
+  // unbounded; oldest unverified samples drop out first.
   function captureSample(imgEl, text, conf) {
     const png = snapshotImage(imgEl);
-    if (!png) return;
+    if (!png) return null;
     const id = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     chrome.storage.local.get([SAMPLES_KEY], (res) => {
       const arr = res[SAMPLES_KEY] || [];
-      arr.push({ id, png, text, conf, verified: false, ts: Date.now() });
+      arr.push({ id, png, text, conf, verified: false, rejected: false, ts: Date.now() });
       while (arr.length > 15000) {
         // drop oldest unverified first; if all verified, drop oldest overall
         const idx = arr.findIndex(s => !s.verified);
@@ -807,11 +809,14 @@ Requirements:
       }
       chrome.storage.local.set({ [SAMPLES_KEY]: arr });
     });
-    lastSample = { id, text };
-    if (verifyTimer) clearTimeout(verifyTimer);
-    // Fallback: clear pending status after 8s if neither success nor failure
-    // signal was seen (e.g. navigation, tab switch). Sample stays unverified.
-    verifyTimer = setTimeout(() => { lastSample = null; verifyTimer = null; }, 8000);
+    return id;
+  }
+
+  // Record which sample is awaiting HOTH's verdict, persisted so it survives
+  // the POST page reload. Written before submit so it has time to flush.
+  function markPendingVerify(id, text) {
+    if (!id) return;
+    chrome.storage.local.set({ [PENDING_KEY]: { id, text, ts: Date.now() } });
   }
 
   function verifySample(id, ok) {
@@ -820,44 +825,57 @@ Requirements:
       const arr = res[SAMPLES_KEY] || [];
       const s = arr.find(x => x.id === id);
       if (!s) return;
-      // ok=true: HOTH accepted (success message) -> verified ground truth
-      // ok=false: HOTH rejected (error message) -> flag as known-wrong
+      // ok=true: HOTH accepted (no captcha error) -> verified ground truth
+      // ok=false: HOTH rejected (captcha error)   -> flag as known-wrong
       s.verified = !!ok;
       s.rejected = !ok;
       chrome.storage.local.set({ [SAMPLES_KEY]: arr });
     });
   }
 
-  // Watch for HOTH's response messages. TWO distinct signals from the user:
-  //  - "There are no articles to assign!" => captcha was CORRECT (verified)
+  // HOTH's two distinct responses after a captcha POST (exact phrasing):
   //  - "You must enter the captcha to take a new assignment" => WRONG (rejected)
-  // Either signal resolves the pending verification for the last submission.
-  // Exact phrasing only — looser patterns matched menu text on other pages.
+  //  - "There are no articles to assign!"                    => CORRECT (verified)
+  // The reliable signal is the captcha ERROR: if it's absent after our submit,
+  // the captcha was accepted.
   const SUCCESS_RE = /there are no articles to assign/i;
   const FAILURE_RE = /must enter the captcha to take a new assignment/i;
-  new MutationObserver(() => {
-    if (!lastSample) return;
-    // scan likely message containers + bare text nodes
-    const nodes = document.querySelectorAll('.alert, .alert-danger, .alert-info, .alert-warning, .alert-success, .error, .message, .flash, .notice, .invalid-feedback, p, div');
-    for (const el of nodes) {
-      const t = (el.textContent || '').slice(0, 300);
-      if (!t) continue;
-      if (SUCCESS_RE.test(t)) {
-        if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
-        const id = lastSample.id; lastSample = null;
-        verifySample(id, true);
-        console.log('[Inkwell] HOTH accepted ✓ -> sample verified');
+
+  // On every page load, resolve any verification left pending from the submit
+  // that triggered this reload. The result message is in the server-rendered
+  // HTML, so it's present immediately; we retry briefly to be safe.
+  function resolvePendingVerifyOnLoad() {
+    chrome.storage.local.get([PENDING_KEY], (res) => {
+      const pending = res[PENDING_KEY];
+      if (!pending || !pending.id) return;
+      // Ignore stale records (e.g. autosolve stopped mid-delay, manual refresh).
+      if (Date.now() - (pending.ts || 0) > 60000) {
+        chrome.storage.local.remove(PENDING_KEY);
         return;
       }
-      if (FAILURE_RE.test(t)) {
-        if (verifyTimer) { clearTimeout(verifyTimer); verifyTimer = null; }
-        const id = lastSample.id; lastSample = null;
-        verifySample(id, false);
-        console.log('[Inkwell] HOTH rejected ✗ -> sample marked wrong');
-        return;
-      }
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      let tries = 0;
+      const scan = () => {
+        const txt = (document.body && document.body.innerText) || '';
+        if (FAILURE_RE.test(txt)) {
+          verifySample(pending.id, false);
+          chrome.storage.local.remove(PENDING_KEY);
+          console.log('[Inkwell] HOTH rejected ✗ -> "' + pending.text + '" marked wrong');
+          return;
+        }
+        if (SUCCESS_RE.test(txt)) {
+          verifySample(pending.id, true);
+          chrome.storage.local.remove(PENDING_KEY);
+          console.log('[Inkwell] HOTH accepted ✓ -> "' + pending.text + '" verified');
+          return;
+        }
+        // Neither message yet — wait for the DOM, then give up (don't guess).
+        if (++tries < 6) { setTimeout(scan, 400); return; }
+        chrome.storage.local.remove(PENDING_KEY);
+        console.log('[Inkwell] verification inconclusive for "' + pending.text + '"');
+      };
+      scan();
+    });
+  }
 
   // ─── Main solve loop ───────────────────────────────────────────────────────
   async function runLoop() {
@@ -900,10 +918,11 @@ Requirements:
       // ALWAYS submit. The user wants every captcha autofilled — no skipping,
       // no waiting for high confidence. If the read isn't 5 chars we still
       // submit what we have (HOTH will reject it, fresh code appears, and the
-      // loop tries again automatically). Every accepted solve gets saved as
-      // a verified-correct training pair (see captureSample).
+      // loop tries again automatically). The sample is saved now and marked
+      // pending-verification right before submit; the NEXT page load resolves
+      // whether HOTH accepted it (see resolvePendingVerifyOnLoad).
       const corrected = result || '';
-      captureSample(imgEl, corrected, sol.conf);
+      const sampleId = captureSample(imgEl, corrected, sol.conf);
 
       setStatus(`Autofill: ${corrected || '?'}  (${Math.round(sol.conf * 100)}%)`, '#2DD4BF');
 
@@ -937,6 +956,9 @@ Requirements:
         document.querySelector('input[type="submit"]');
 
       if (submitEl) {
+        // Persist the pending verification BEFORE submit so it survives the
+        // POST reload; the next page load reads it and records the verdict.
+        markPendingVerify(sampleId, corrected);
         submitEl.click();
         setStatus(`Submitted "${corrected}"`, '#2DD4BF');
       } else {
@@ -1175,7 +1197,10 @@ Requirements:
   });
 
   // ─── Init ─────────────────────────────────────────────────────────────────
-  if (document.body) injectOverlay();
-  else document.addEventListener('DOMContentLoaded', injectOverlay);
+  if (document.body) { injectOverlay(); resolvePendingVerifyOnLoad(); }
+  else document.addEventListener('DOMContentLoaded', () => {
+    injectOverlay();
+    resolvePendingVerifyOnLoad();
+  });
 
 })();

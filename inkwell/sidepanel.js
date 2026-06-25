@@ -218,6 +218,10 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
     } else if (group === 'wait') {
       waitTimeEl.value = val;
       waitTimeVal.textContent = val + 's';
+    } else if (group === 'ridgeDelay') {
+      ridgeDelayEl.value = val;
+      ridgeDelayVal.textContent = val + 's';
+      saveRidgeSettings();   // persist immediately so the solver picks it up
     }
     syncPresetsForGroup(group, val);
   });
