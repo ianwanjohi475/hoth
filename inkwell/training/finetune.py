@@ -30,9 +30,9 @@ OUT = "/home/user/hoth/inkwell/model/weights.json"
 DATA = "/home/user/hoth/inkwell/data"
 CHAR2IDX = {c: i for i, c in enumerate(ALPHABET)}
 N_CHARS = 5
-SYNTH_N = 6000
-REAL_REPEAT = 11
-EPOCHS = 14
+SYNTH_N = 4000          # less synth - real dominates
+REAL_REPEAT = 5         # 7858 * 5 = 39k real-augmented
+EPOCHS = 12
 
 
 def load_real(paths):
