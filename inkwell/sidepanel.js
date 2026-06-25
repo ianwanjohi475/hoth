@@ -448,8 +448,10 @@ const ridgeSaveBtn       = $('ridgeSaveBtn');
 const ridgeDot           = $('ridgeDot');
 const ridgeStatusText    = $('ridgeStatusText');
 const exportSamplesBtn   = $('exportSamplesBtn');
+const exportVerifiedBtn  = $('exportVerifiedBtn');
 const clearSamplesBtn    = $('clearSamplesBtn');
 const samplesVerifiedEl  = $('samplesVerified');
+const samplesRejectedEl  = $('samplesRejected');
 const samplesTotalEl     = $('samplesTotal');
 const samplesBar         = $('samplesBar');
 const samplesPct         = $('samplesPct');
@@ -466,8 +468,10 @@ const SAMPLE_GOAL = 300;   // total collected images to aim for before sending
 function renderSamples(arr) {
   arr = arr || [];
   const verified = arr.filter(s => s.verified).length;
+  const rejected = arr.filter(s => s.rejected).length;
   const total = arr.length;
   samplesVerifiedEl.textContent = verified;
+  if (samplesRejectedEl) samplesRejectedEl.textContent = rejected;
   samplesTotalEl.textContent = total;
   // Progress tracks TOTAL collected images (what we send for labeling),
   // not verified — verified stays low until the model improves.
@@ -509,6 +513,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[SAMPLES_KEY]) renderSamples(changes[SAMPLES_KEY].newValue);
 });
 
+function downloadSamples(samples, filenamePrefix) {
+  const blob = new Blob([JSON.stringify(samples)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filenamePrefix}-${samples.length}-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 exportSamplesBtn?.addEventListener('click', () => {
   chrome.storage.local.get([SAMPLES_KEY], (res) => {
     const arr = res[SAMPLES_KEY] || [];
@@ -516,15 +530,19 @@ exportSamplesBtn?.addEventListener('click', () => {
       alert('No captchas collected yet. Run Autosolve on a HOTH writer page first — images appear in the live feed as they are collected.');
       return;
     }
-    // Export ALL collected images (verified or not). Correct labels get
-    // applied later during training, so every image is useful.
-    const blob = new Blob([JSON.stringify(arr)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inkwell-captchas-${arr.length}-${Date.now()}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadSamples(arr, 'inkwell-captchas-all');
+  });
+});
+
+exportVerifiedBtn?.addEventListener('click', () => {
+  chrome.storage.local.get([SAMPLES_KEY], (res) => {
+    const arr = res[SAMPLES_KEY] || [];
+    const verified = arr.filter(s => s.verified);
+    if (!verified.length) {
+      alert('No verified samples yet.\n\nA sample becomes "verified" when HOTH accepts the captcha and shows "There are no articles to assign!" — that confirms the OCR read was correct. Keep Autosolve running until verified counter goes up.');
+      return;
+    }
+    downloadSamples(verified, 'inkwell-captchas-verified');
   });
 });
 

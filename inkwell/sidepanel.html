@@ -288,13 +288,17 @@
         </div>
 
         <!-- big live counters -->
-        <div style="display:flex;gap:8px;margin-bottom:10px">
-          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center">
-            <div id="samplesVerified" style="font-size:22px;font-weight:800;color:#2DD4BF;line-height:1">0</div>
-            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Verified</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px 4px;text-align:center">
+            <div id="samplesVerified" style="font-size:20px;font-weight:800;color:#2DD4BF;line-height:1">0</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Verified ✓</div>
           </div>
-          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center">
-            <div id="samplesTotal" style="font-size:22px;font-weight:800;color:var(--text);line-height:1">0</div>
+          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px 4px;text-align:center">
+            <div id="samplesRejected" style="font-size:20px;font-weight:800;color:#FB7185;line-height:1">0</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Rejected ✗</div>
+          </div>
+          <div style="flex:1;background:var(--card,#161b22);border:1px solid var(--border);border-radius:8px;padding:8px 4px;text-align:center">
+            <div id="samplesTotal" style="font-size:20px;font-weight:800;color:var(--text);line-height:1">0</div>
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Total</div>
           </div>
         </div>
@@ -309,13 +313,16 @@
         </div>
 
         <!-- export / clear — kept ABOVE the gallery so they're always visible -->
+        <div class="quick-row" style="margin-bottom:6px">
+          <button class="btn btn-green btn-sm" id="exportVerifiedBtn" style="flex:1">⬇ Export Verified ✓</button>
+          <button class="btn btn-secondary btn-sm" id="exportSamplesBtn" style="flex:1">⬇ Export All</button>
+        </div>
         <div class="quick-row" style="margin-bottom:10px">
-          <button class="btn btn-green btn-sm" id="exportSamplesBtn" style="flex:2">⬇ Export Data (.json)</button>
-          <button class="btn btn-secondary btn-sm" id="clearSamplesBtn" style="flex:1">Clear</button>
+          <button class="btn btn-secondary btn-sm" id="clearSamplesBtn" style="flex:1">Clear All Samples</button>
         </div>
         <div id="exportHint" style="font-size:10px;color:var(--muted);margin-bottom:10px">
-          Exports ALL collected images to your Downloads folder as one file. No typing needed —
-          send me that file and I read &amp; label the captchas myself, then retrain.
+          <strong style="color:#2DD4BF">Export Verified</strong> — only HOTH-accepted captchas (perfect labels, best for retraining).<br>
+          <strong style="color:var(--text)">Export All</strong> — every captured image including rejects (more volume, noisier).
         </div>
 
         <!-- live thumbnail feed of the most recent captchas (own scroll, can't push UI) -->

@@ -828,12 +828,13 @@ Requirements:
     });
   }
 
-  // Watch for HOTH's response messages. TWO distinct signals (you told me):
-  //  - "There are no articles to assign!" => captcha was CORRECT (success)
+  // Watch for HOTH's response messages. TWO distinct signals from the user:
+  //  - "There are no articles to assign!" => captcha was CORRECT (verified)
   //  - "You must enter the captcha to take a new assignment" => WRONG (rejected)
   // Either signal resolves the pending verification for the last submission.
-  const SUCCESS_RE = /there are no articles to assign|article.*assigned|successfully claimed/i;
-  const FAILURE_RE = /must enter the captcha|wrong captcha|captcha.*incorrect|invalid captcha/i;
+  // Exact phrasing only — looser patterns matched menu text on other pages.
+  const SUCCESS_RE = /there are no articles to assign/i;
+  const FAILURE_RE = /must enter the captcha to take a new assignment/i;
   new MutationObserver(() => {
     if (!lastSample) return;
     // scan likely message containers + bare text nodes
